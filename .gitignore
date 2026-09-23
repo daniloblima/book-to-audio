@@ -1,0 +1,22 @@
+# Ambiente e modelos: recriados pelo passo a passo do README
+.venv/
+modelos/
+
+# Saídas e documentos de teste (podem ter direitos autorais)
+saida/
+*.mp3
+*.wav
+*.aiff
+*.pdf
+*.epub
+*.azw3
+
+# Planejamento interno do autor
+00_INDICE_*.md
+00_SINTESE_*.md
+01-*.md
+pesquisa/
+
+# Sistema
+.DS_Store
+__pycache__/
