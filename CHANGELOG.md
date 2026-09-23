@@ -190,3 +190,14 @@ O ambiente do Kokoro e os modelos (353 MB) ainda estão numa pasta temporária. 
 
 ### PROBLEMA
 O arquivo passou do limite de 30 MiB de um canal de envio usado no teste. Para livro longo o tamanho vai crescer: 3 h a 64 kbps dão cerca de 82 MB. Não é problema para o celular, só para esse canal de envio.
+
+---
+
+## [2026-09-23] - Publicação da 0.1.0 (11:11)
+
+### RESULTADOS
+- Teste do zero num clone limpo, seguindo o README: `./baixar_modelos.sh` baixou e conferiu os dois modelos pelo SHA-256, `uv sync` montou o ambiente, e `uv run gerar_audio.py feldman.pdf` extraiu, montou o roteiro (0 palavras suspeitas) e gerou 77,0 min em 9 capítulos. O `git status` do clone ficou vazio depois da execução, então PDF, modelos, ambiente e saída ficam todos ignorados.
+- Repositório público criado com licença MIT, tag e release v0.1.0.
+
+### LIÇÃO
+Antes do primeiro envio, simular o repositório (`git init` numa cópia, `git add -A`, `git ls-files`) mostra exatamente o que o `.gitignore` deixa passar, sem risco de publicar nada.
