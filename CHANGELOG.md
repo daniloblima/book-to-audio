@@ -8,6 +8,17 @@
 
 O projeto segue versionamento semântico (MAIOR.MENOR.CORREÇÃO). As entradas datadas abaixo são o diário técnico de cada sessão, na ordem em que aconteceram. As entradas de versão resumem o que cada release entrega.
 
+## [0.2.0] - 2026-09-23 (12:30)
+
+Figuras e tabelas, e limpeza de artigo de revista.
+
+- O roteiro passa a ser montado a partir do JSON do Docling, que marca cabeçalho, rodapé, legenda, nota e fórmula. A capa de revista (nome do periódico, ISSN, "To cite this article", palavras-chave, JEL) fica de fora e só o resumo é lido. Subseção vira subtítulo.
+- Figuras e tabelas: anúncio na língua do documento e legenda lida no fim do parágrafo que cita a figura pela primeira vez. Recorte de figura e legenda do PDF para `<obra>/figuras/`, com `legendas.txt`.
+- Capítulo por figura anunciada ("Results · Figure 5"), com a imagem embutida (ID3 APIC). O Podcast Addict mostra o capítulo e não mostra a imagem de arquivo local.
+- Cada documento ganha a sua pasta de saída, e os intermediários vão para `.trabalho/`. Destino padrão configurável por `BOOK_TO_AUDIO_SAIDA`.
+- Capítulos gravados pelo mutagen em ordem cronológica no arquivo.
+- Nova dependência: mutagen.
+
 ## [0.1.0] - 2026-09-23 (10:58)
 
 Primeira versão utilizável. PDF para MP3 com capítulos, em um comando.
@@ -201,3 +212,83 @@ O arquivo passou do limite de 30 MiB de um canal de envio usado no teste. Para l
 
 ### LIÇÃO
 Antes do primeiro envio, simular o repositório (`git init` numa cópia, `git add -A`, `git ls-files`) mostra exatamente o que o `.gitignore` deixa passar, sem risco de publicar nada.
+
+---
+
+## [2026-09-23] - Saída por obra e diagnóstico para figuras (11:28)
+
+### DECISÃO — onde ficam os áudios
+Os áudios são do trabalho de leitura, não da ferramenta. Na máquina do autor, vão para uma pasta sincronizada com o celular, uma subpasta por obra: `<obra>/<obra>.mp3`, `<obra>/roteiro.txt` e, em breve, `<obra>/figuras/`. O gerador passa a criar a subpasta sozinho. O destino vem de `--saida`, ou da variável `BOOK_TO_AUDIO_SAIDA`, ou é `saida/`. Os intermediários (WAV por capítulo) foram para `.trabalho/<obra>/` no projeto (ignorado pelo git), para não pesar na pasta sincronizada.
+
+### DESCOBERTAS no artigo de revista (duas colunas, Taylor & Francis)
+- Com `--output` relativo, o Docling grava as imagens num caminho aninhado (`out/out/<nome>_artifacts/`), porque o link do Markdown e a pasta são ambos relativos. Usar caminho absoluto.
+- A capa da editora vira 19 imagens de logotipo, o nome da revista como primeiro título (`## Regional Studies`), ISSN, "To cite this article", número de visualizações e o título repetido. A regra da v0.1.0 ("o primeiro título é o título do documento") trata o nome da revista como título e lê a capa inteira.
+- Palavras-chave, JEL e histórico de submissão aparecem como seções antes da introdução.
+- Subseção numerada ("7.1. Distribution of complexity") casa com a regra de seção numerada e viraria capítulo. Só o primeiro nível deve abrir capítulo.
+- Títulos em maiúsculas ("1. INTRODUCTION").
+- Rodapé de contato do autor ("CONTACT Ron Boschma ...") no meio do corpo.
+- Legendas de figura e tabela saem como parágrafo próprio ("Figure 1. ..."), na posição física da figura, muitas vezes longe da primeira menção no texto. O Markdown põe a legenda antes da imagem. As tabelas saem como tabela Markdown de verdade.
+
+---
+
+## [2026-09-23] - Testes antes de codar: recorte de figura e imagem no capítulo (11:33)
+
+- O JSON do Docling (`--to json`) traz, para cada figura e tabela, a página, a caixa delimitadora (origem no canto inferior esquerdo, em pontos) e as legendas ligadas a ela. Traz também o rótulo de cada trecho: `page_header`, `page_footer`, `footnote`, `formula`, `section_header`, `list_item`. O Markdown perde esses rótulos, e é por isso que o "CONTACT ..." apareceu no corpo. Decisão: o roteiro passa a ser montado a partir do JSON. O Markdown continua aceito como entrada alternativa, com as regras antigas.
+- No artigo de teste: 26 imagens, das quais 7 com legenda (as figuras) e 19 sem (logotipos da capa). Mais 2 tabelas com legenda. Todos os títulos vêm com `level` 1, então a hierarquia sai da numeração ("7.1").
+- Recorte com `pypdfium2` (já vem com o Docling): página renderizada em escala 3 (216 dpi), recortada na caixa convertida para pixels a partir do topo. A Figura 1 saiu certa, mas a caixa da figura não inclui a legenda, que ficou cortada na borda. Solução: unir a caixa da figura à da legenda, com folga.
+- Imagem por capítulo: o ffmpeg não grava imagem dentro de CHAP. O `mutagen` 1.48 grava CTOC e CHAP com subframes TIT2 e APIC (JPEG de até 1000 px, cerca de 100 KB). O ffprobe lê os capítulos gravados pelo mutagen normalmente. Dependência nova: `uv add mutagen`.
+
+---
+
+## [2026-09-23] - Figuras e tabelas, roteiro a partir do JSON (11:46)
+
+### SOLUÇÃO
+`gerar_audio.py` reescrito em torno de uma lista de blocos (título, texto, legenda, nota, fórmula), montada a partir do JSON do Docling. O Markdown ficou como entrada alternativa.
+- Descartados pelo rótulo do Docling: `page_header` e `page_footer`, imagem sem legenda (logotipos), fórmula e nota de rodapé. A nota ainda não entra no áudio, e é o próximo item.
+- Capa: se o documento tem seções numeradas, tudo antes da primeira é capa, e dela só se lê o resumo (título "Abstract", "Resumo" ou "Summary", ou parágrafo que começa com "Abstract"). Sem seções numeradas, vale a regra antiga (o primeiro título é o título do documento).
+- Só seção de primeiro nível abre capítulo. "7.1" vira subtítulo, sem o número. Título em maiúsculas vira "Primeira maiúscula".
+- Ruído no corpo: linhas de contato, licença Open Access, ISSN, histórico de submissão e texto sem nenhuma palavra ("1.00", rótulo de eixo solto).
+- Figuras e tabelas: o anúncio ("Figure 3, in the figures folder." ou "Figura 3, na pasta de figuras.") e a legenda entram no fim do parágrafo que cita a figura pela primeira vez, pela decisão do autor. Figura nunca citada é anunciada onde está. As menções reconhecem "Figures 4 and 5", "Tables 1–2" e as formas em português.
+- Recorte: figura e legenda juntas, com 6 pt de folga, a 216 dpi, em `<obra>/figuras/Figura 01.png` e `Tabela 01.png`, mais `legendas.txt`.
+- Capítulos: gravados pelo mutagen (CTOC + CHAP), não mais pelo ffmpeg. Cada figura anunciada abre um capítulo "<seção> · Figure N" com a imagem (APIC, JPEG até 1000 px), que dura até a próxima figura ou o fim da seção.
+
+### PROBLEMAS
+- Primeira versão dos capítulos de figura: cada figura cortava a seção em três pedaços ("Results", "Figure 1", "Results"). O artigo de teste ficou com 27 capítulos, dez deles chamados "Results". Trocado pelo capítulo que dura até a próxima figura, o que também deixa a imagem na tela enquanto o texto segue falando dela.
+- Com ids "ch2" e "ch10", o ffprobe listou os capítulos fora da ordem (ordem alfabética do id). Corrigido com zeros à esquerda ("ch002").
+- Nome de capítulo em minúsculas ("introduction"): `str.capitalize()` não sobe a primeira letra quando o título começa com número. Corrigido.
+
+### RESULTADOS
+- Artigo de teste (17 p., duas colunas): 49 cabeçalhos e rodapés, 19 logotipos e 8 fórmulas descartados; 9 de 9 figuras e tabelas anunciadas e recortadas certas (conferidas na imagem a Figura 1, a Figura 5 e a Tabela 1); leitura interrompida em "Disclosure statement"; 50,6 min.
+- A Feldman passa pelo roteiro novo com os mesmos 9 capítulos e as mesmas contagens de palavras da 0.1.0 (57 cabeçalhos e rodapés e 1 selo descartados).
+- Correção da correção: os zeros à esquerda no id não resolveram a ordem. Causa real: o mutagen grava os quadros ordenados por tamanho (`ID3Tags._write`, chave `(prioridade, len(data), HashKey)`), então capítulo com imagem, maior, ia para o fim do arquivo. Solução: `salvar_em_ordem()` substitui o `_write` da instância e grava metadados, CTOC e depois os CHAP por tempo de início. Conferido com o ffprobe: 18 capítulos em ordem, 9 com imagem. O MP3 do artigo foi regravado só nas marcas, sem sintetizar de novo.
+
+---
+
+## [2026-09-23] - Teste no celular do artigo com figuras
+
+### RESULTADOS
+- O autor ouviu o artigo no Podcast Addict. Os 18 capítulos aparecem e estão em ordem. A imagem embutida no capítulo (APIC dentro de CHAP) não aparece em arquivo local. A nota do changelog do app sobre arte de capítulo provavelmente vale só para episódios de feed.
+- A pasta `figuras/` na nuvem funciona como anexo: ele ouve o anúncio e abre a figura no app do OneDrive.
+- Fluxo real: o Podcast Addict não lê pasta do OneDrive, então o MP3 é copiado da pasta sincronizada para uma pasta local do celular. Ideia para depois: um app Android de sincronização de pasta para eliminar a cópia manual.
+
+### DECISÃO
+Manter os capítulos de figura, porque a navegação por figura funciona, e manter a imagem embutida, que custa cerca de 100 KB por figura e pode aparecer em outros tocadores. O README diz que o Podcast Addict não mostra a imagem.
+
+---
+
+## [2026-09-23] - Cabeçalho corrido e parágrafo partido com o leitor pypdfium2 (12:33)
+
+### PROBLEMA
+Teste rápido da Feldman com o código novo (voz `say`): o leitor pypdfium2 fez o Docling marcar só 17 cabeçalhos e rodapés, contra 57 com o leitor padrão. Vazaram para o texto falado 12 cabeçalhos "354 M. P. Feldman" (um por página par) e a afiliação da autora. Cada cabeçalho vazado partia um parágrafo em dois na virada de página, e foram 10 frases cortadas ao meio. Na 0.1.0 isso não aparecia porque a Feldman tinha sido extraída com o leitor padrão.
+
+### SOLUÇÃO
+- Cabeçalho corrido: linha de texto com menos de 12 palavras que aparece 3 vezes ou mais no documento, igual a menos dos números, é descartada. Regra genérica, sem nome de autor nem de revista.
+- Afiliação: linha de até 120 caracteres, sem ponto final, com University, Universidade, Institute, Department e equivalentes.
+- Parágrafo partido: se o trecho anterior não termina em pontuação final e o novo começa em minúscula, os dois são emendados.
+- Anúncio de figura: fica pendente até o parágrafo fechar a frase (ou até o próximo título), para não cair no meio de uma frase partida entre páginas.
+
+### RESULTADOS
+Feldman: 0 quebras, 0 vazamentos, 8.453 palavras (as 8.618 anteriores menos o que vazava). Artigo de teste: 0 quebras, 9 de 9 anúncios, todos depois de ponto final. O MP3 do artigo foi gerado de novo com as correções.
+
+### LIÇÃO
+Trocar o leitor de PDF para consertar um documento pode piorar outro. Cada mudança de extração se testa nos dois documentos de referência, contando quebras de frase e linhas curtas repetidas.

@@ -4,6 +4,7 @@ modelos/
 
 # Saídas e documentos de teste (podem ter direitos autorais)
 saida/
+.trabalho/
 *.mp3
 *.wav
 *.aiff

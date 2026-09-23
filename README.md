@@ -1,6 +1,6 @@
 # book-to-audio
 
-Versão 0.1.0, de 23/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
+Versão 0.2.0, de 23/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
 Converte um PDF num MP3 com capítulos, para ouvir num tocador de podcast. Tudo roda no seu Mac, com vozes gratuitas, sem enviar o documento para serviço nenhum.
 
@@ -11,23 +11,28 @@ O problema que resolve: quem tem mais para ler do que tempo para ler costuma ter
 ```
 documento.pdf
   │
-  ├─ Docling: extrai o texto em ordem de leitura, sem cabeçalho,
-  │           rodapé nem número de página
+  ├─ Docling: extrai o texto em ordem de leitura e marca o que é
+  │           cabeçalho, rodapé, legenda, nota e fórmula
   ├─ roteiro: decide o que se fala, capítulo por capítulo
   ├─ Kokoro:  sintetiza a voz, localmente
-  └─ ffmpeg:  monta o MP3 e grava os capítulos
+  └─ ffmpeg e mutagen: montam o MP3 e gravam os capítulos
   │
-saida/documento.mp3            o áudio, com capítulos
-saida/documento-roteiro.txt    o texto exato que foi falado
+saida/documento/documento.mp3          o áudio, com capítulos
+saida/documento/roteiro.txt            o texto exato que foi falado
+saida/documento/figuras/Figura 01.png  cada figura e tabela, recortada do PDF
+saida/documento/figuras/legendas.txt   as legendas, na ordem
 ```
 
 O roteiro é a parte própria deste projeto. As outras três etapas usam ferramentas abertas e maduras. Na versão 0.1.0 ele segue estas regras:
 
 - o primeiro capítulo, "Abertura", tem o título, o autor e o resumo;
-- cada seção numerada do documento ("1 Introduction", "2. Literature review") vira um capítulo;
-- título de subseção é lido como subtítulo, com uma pausa antes e depois;
+- da capa só se lê o resumo: nome da revista, ISSN, "To cite this article", palavras-chave, códigos JEL e histórico de submissão ficam de fora;
+- cada seção numerada de primeiro nível ("1 Introduction", "2. Literature review") vira um capítulo;
+- subseção ("7.1 Distribution of complexity") e título sem número são lidos como subtítulo, com uma pausa antes e depois;
+- cabeçalho e rodapé de página, linhas de contato do autor e avisos de licença da editora ficam de fora;
 - citações autor-ano entre parênteses saem do áudio, e "Schumpeter (1934)" vira "Schumpeter";
-- imagens são ignoradas;
+- figuras e tabelas não são lidas: no fim do parágrafo que cita a figura pela primeira vez, o áudio diz "Figure 3, in the figures folder" (ou "Figura 3, na pasta de figuras", em português) e lê a legenda inteira. Figura que o texto nunca cita é anunciada onde está impressa;
+- logotipos e imagens sem legenda são ignorados, assim como fórmulas;
 - a leitura para na seção de referências, notas, agradecimentos, financiamento ou declaração de conflito.
 
 O arquivo `-roteiro.txt` mostra exatamente o que foi falado. Vale abrir antes de ouvir um documento longo, para conferir se nada importante ficou de fora.
@@ -83,7 +88,7 @@ Um texto em português:
 uv run gerar_audio.py capitulo.pdf --lingua pt --titulo "Impacto socioeconômico da Unicamp" --autor "Serra, Cunha e Laplane"
 ```
 
-O resultado vai para a pasta `saida/`. Título e autor são opcionais, e sem eles o áudio anuncia o nome do arquivo.
+O resultado vai para `saida/<nome do documento>/`: o MP3, o `roteiro.txt` e a pasta `figuras/`. Título e autor são opcionais, e sem eles o áudio anuncia o nome do arquivo. Para mandar tudo para outra pasta por padrão (uma pasta sincronizada com o celular, por exemplo), defina a variável `BOOK_TO_AUDIO_SAIDA`. Os arquivos intermediários ficam em `.trabalho/`, dentro do projeto.
 
 Todas as opções:
 
@@ -92,11 +97,12 @@ Todas as opções:
 | `--lingua en` ou `pt` | língua do texto, que define a voz | `en` |
 | `--titulo`, `--autor` | anunciados na abertura e gravados nos metadados do MP3 | nome do arquivo |
 | `--voz` | troca a voz (ver abaixo) | `af_heart` em inglês, `pf_dora` em português |
-| `--saida` | pasta de saída | `saida/` |
+| `--saida` | pasta onde cada documento ganha a sua subpasta | `$BOOK_TO_AUDIO_SAIDA` ou `saida/` |
 | `--nome` | nome do MP3, sem extensão | nome do arquivo de entrada |
 | `--motor say` | usa a voz do próprio macOS no lugar do Kokoro, muito mais rápida e bem mais robótica | `kokoro` |
+| `--sem-capitulos-de-figura` | não abre capítulo em cada figura anunciada | capítulos de figura ligados |
 
-A entrada também pode ser um `.md` já extraído pelo Docling, o que permite corrigir o texto à mão antes de gerar a voz.
+A entrada também pode ser o `.json` ou o `.md` já extraídos pelo Docling (ficam em `.trabalho/<nome>/`), o que permite corrigir o texto à mão antes de gerar a voz. Sem o PDF, as figuras são anunciadas mas não recortadas.
 
 ## Vozes
 
@@ -117,6 +123,8 @@ O MP3 funciona em qualquer tocador que leia arquivo local. Para ter capítulos e
 
 Os capítulos são gravados no formato ID3v2 (frames CHAP e CTOC), que é o padrão de capítulos em MP3 de podcast. Outros tocadores que leem capítulos devem funcionar, mas só o Podcast Addict foi testado.
 
+Figuras: cada figura anunciada abre um capítulo próprio ("Results · Figure 5"), que vai até a próxima figura ou o fim da seção, então dá para pular direto para ela. A imagem da figura também vai embutida nesse capítulo. O Podcast Addict não mostra essa imagem em arquivo local (testado em 23/09/2026); outros tocadores que exibem arte de capítulo podem mostrar. O caminho que funciona em qualquer tocador é a pasta `figuras/`: se ela estiver numa nuvem sincronizada com o celular, você ouve o anúncio e abre a figura no app da nuvem.
+
 ## Desempenho
 
 Medido num M3 Pro, só com o processador:
@@ -128,13 +136,13 @@ Medido num M3 Pro, só com o processador:
 ## Limitações conhecidas
 
 - Só PDF. EPUB, AZW3 e DOCX estão planejados.
-- Figuras, tabelas e equações são ignoradas. A próxima versão deve anunciar "Figura 3, ver anexo", ler a legenda e salvar as imagens numa pasta ao lado do áudio.
+- Equações são ignoradas em silêncio. O conteúdo das tabelas não é lido, só a legenda.
+- A figura só é reconhecida se tiver legenda começando por "Figure", "Fig.", "Table", "Figura", "Tabela", "Quadro" ou "Gráfico" seguido do número.
 - Notas de rodapé ainda não são tratadas. O plano é lê-las como um parêntese, no ponto final seguinte à chamada da nota.
 - Documentos longos saem num MP3 só. O plano é dividir em partes de até 3 horas.
 - A detecção de capítulos depende de seções numeradas. Documento sem numeração sai com um capítulo só, além da abertura.
 - A remoção de citações reconhece o formato autor-ano. Citação numérica, como "[12]", continua sendo lida.
-- O travessão às vezes vira hífen na extração ("insight-that"), o que pode alterar a entonação da frase.
-- Até aqui, o caminho completo, do PDF ao celular, foi testado com um capítulo de livro acadêmico em inglês, de 27 páginas. A extração também foi testada num artigo de revista em duas colunas, com figuras e tabelas.
+- Até aqui, o caminho completo, do PDF ao celular, foi testado com dois documentos em inglês: um capítulo de livro acadêmico de 27 páginas e um artigo de revista de 17 páginas em duas colunas, com sete figuras e duas tabelas.
 
 ## O que está no repositório
 
@@ -146,7 +154,7 @@ Medido num M3 Pro, só com o processador:
 | `CHANGELOG.md` | cada versão, o que mudou e por quê, incluindo os problemas encontrados e como foram resolvidos |
 | `LICENSE` | licença MIT |
 
-Ficam fora do repositório, pelo `.gitignore`: o ambiente `.venv/`, os modelos, a pasta `saida/` e qualquer PDF ou áudio. Documentos de terceiros costumam ter direitos autorais e não devem ser publicados junto.
+Ficam fora do repositório, pelo `.gitignore`: o ambiente `.venv/`, os modelos, as pastas `saida/` e `.trabalho/` e qualquer PDF ou áudio. Documentos de terceiros costumam ter direitos autorais e não devem ser publicados junto.
 
 ## Versões
 
@@ -158,7 +166,9 @@ O projeto segue versionamento semântico. O número do meio sobe a cada funciona
 - [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), de hexgrad, licença Apache 2.0: modelo de voz.
 - [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), de thewh1teagle, licença MIT: execução do Kokoro sem PyTorch.
 - [eSpeak NG](https://github.com/espeak-ng/espeak-ng), licença GPL 3.0: conversão de texto em fonemas.
-- [FFmpeg](https://ffmpeg.org): montagem do MP3 e dos capítulos.
+- [FFmpeg](https://ffmpeg.org): montagem do MP3.
+- [mutagen](https://github.com/quodlibet/mutagen), licença GPL 2.0 ou posterior: gravação dos capítulos com imagem.
+- [pypdfium2](https://github.com/pypdfium2-team/pypdfium2), licença Apache 2.0 ou BSD-3: recorte das figuras.
 
 ## Licença
 
