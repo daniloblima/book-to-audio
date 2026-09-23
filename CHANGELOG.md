@@ -8,6 +8,15 @@
 
 O projeto segue versionamento semântico (MAIOR.MENOR.CORREÇÃO). As entradas datadas abaixo são o diário técnico de cada sessão, na ordem em que aconteceram. As entradas de versão resumem o que cada release entrega.
 
+## [0.3.0] - 2026-09-23 (16:38)
+
+Skill do Claude Code e instalação em um comando.
+
+- Skill `/audiolivro` em `skill/SKILL.md`: pasta de saída perguntada no primeiro uso, busca do documento pelo nome (Spotlight) com escolha sempre do usuário, identificação de título, autor e língua, roteiro conferido antes da voz, confirmação acima de 60 minutos estimados, entrega só depois do MP3 pronto.
+- `instalar.sh`: Homebrew (ffmpeg, espeak-ng, uv), modelos, ambiente e atalho da skill, pulando o que já está feito.
+- Motor: `--identificar`, `--so-roteiro` (duração estimada a 110 palavras por minuto), `--mostrar-pasta` e `--definir-pasta` (`BOOK_TO_AUDIO_SAIDA` em `~/.claude/.env`), reaproveitamento da extração já feita.
+- Correções: aviso de licença Creative Commons, inteiro ou em pedaço, sai do áudio; hífen de fim de linha solto ("so - ciais") é emendado.
+
 ## [0.2.0] - 2026-09-23 (12:30)
 
 Figuras e tabelas, e limpeza de artigo de revista.
@@ -292,3 +301,33 @@ Feldman: 0 quebras, 0 vazamentos, 8.453 palavras (as 8.618 anteriores menos o qu
 
 ### LIÇÃO
 Trocar o leitor de PDF para consertar um documento pode piorar outro. Cada mudança de extração se testa nos dois documentos de referência, contando quebras de frase e linhas curtas repetidas.
+
+---
+
+## [2026-09-23] - Skill /audiolivro, testes pelo skill-creator e correções (16:38)
+
+### OBJETIVO
+Transformar o book-to-audio em skill do Claude Code seguindo o skill-creator da Anthropic, no mesmo desenho da pesquisa-orquestrada (motor no repositório, skill em `skill/`, atalho em `~/.claude/skills/audiolivro`).
+
+### SOLUÇÃO
+Motor ganhou as funções que a skill chama (identificar, parar no roteiro, pasta de saída). O trabalho repetitivo e determinístico ficou no script, e a interpretação (título limpo, autor em forma curta, qual arquivo) ficou com o Claude, porque os metadados de PDF vêm sujos: no artigo de teste, o campo Author traz os quatro nomes grudados com todas as afiliações.
+
+### TESTES (iteração 1, três sessões `claude -p` separadas, saída numa pasta temporária)
+Nota: 4 de 14 critérios. Sem comparação "sem skill", porque sem ela o Claude nem sabe que o motor existe.
+- Pedido vago ("o artigo do Pinheiro e do Boschma"): achou o MP3 já gerado no OneDrive e descreveu esse áudio em vez de seguir o fluxo. Leu o roteiro e achou o aviso de licença Creative Commons ("nc-nd/4.0/, which permits non-commercial re-use...") no meio de uma frase da introdução.
+- Caminho explícito em português (capítulo de Serra, Cunha e Laplane): língua, voz e as 3 tabelas certas. A síntese em segundo plano morreu quando a sessão não interativa terminou, o que é limite do teste. Achou hífen solto ("so - ciais", "Amé - rica", "edu - cação") e 3 ou 4 notas bibliográficas que o Docling não marcou como nota.
+- Pedido ambíguo ("o Running Lean"): o Spotlight achou oito cópias (PDF, EPUB, AZW3, KFX). A skill escolheu sozinha um PDF de Downloads com nome de site de download e "cópia", disparou a extração de 370 páginas antes de confirmar e não avisou que EPUB e AZW3 não são aceitos.
+
+### CAUSAS E CORREÇÕES
+- Licença no meio da frase: a regra de parágrafo partido, criada hoje, emendou a continuação da licença (começa em minúscula) no parágrafo anterior, porque o RUIDO só pegava o começo do aviso. Correção: `LICENCA` descarta qualquer bloco com creativecommons.org, "nc-nd/", "which permits ... re-use" ou "distributed under the terms of the Creative Commons".
+- Hífen solto: `HIFEN_SOLTO` emenda "até 6 letras + espaço-hífen-espaço + minúscula". Um travessão de verdade vem como "—" ou "–", e o hífen composto vem sem espaços, então os dois não são afetados.
+- Skill: a instrução "confirme quando houver mais de um candidato" não dizia por quê, e o modelo trocou por critério técnico. Reescrita com a razão (só o usuário sabe qual edição quer, e cópia de origem duvidosa nunca é escolha feita em nome dele). Acrescentados o aviso de formatos não aceitos, o caso "o áudio já existe" e a espera pelo `MP3 pronto` antes de entregar.
+
+### RESULTADOS
+Conferência rápida pelo `--so-roteiro`: artigo de teste sem licença (0 ocorrências), capítulo em português sem hífen solto ("sociais" 5x, "educação" 2x, "América Latina"), Feldman idêntica (8.452 palavras). O MP3 do artigo foi gerado de novo com a correção.
+
+### PENDENTE
+- Segunda iteração dos testes da skill, com os mesmos três pedidos. Não rodada por falta de tempo do autor. O visualizador da primeira ficou na pasta temporária da sessão.
+- Notas bibliográficas não marcadas pelo Docling: próximo item (notas de rodapé, separando nota de argumento de nota de referência).
+- Otimização da descrição da skill (`run_loop` do skill-creator).
+

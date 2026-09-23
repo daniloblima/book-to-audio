@@ -1,6 +1,6 @@
 [project]
 name = "book-to-audio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Converte PDF em MP3 com capítulos para ouvir num tocador de podcast, com vozes locais e gratuitas."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

@@ -21,3 +21,6 @@ pesquisa/
 # Sistema
 .DS_Store
 __pycache__/
+
+# Registro de defeitos durante o uso: cita documentos reais
+BACKLOG*.md

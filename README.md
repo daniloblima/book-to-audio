@@ -1,6 +1,6 @@
 # book-to-audio
 
-Versão 0.2.0, de 23/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
+Versão 0.3.0, de 23/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
 Converte um PDF num MP3 com capítulos, para ouvir num tocador de podcast. Tudo roda no seu Mac, com vozes gratuitas, sem enviar o documento para serviço nenhum.
 
@@ -45,36 +45,39 @@ O arquivo `-roteiro.txt` mostra exatamente o que foi falado. Vale abrir antes de
 
 ## Instalação
 
-São quatro passos, e cada um roda uma vez só.
-
-1. Instale as ferramentas do sistema pelo Homebrew. O `ffmpeg` monta o MP3, o `espeak-ng` converte o texto em fonemas para a voz e o `uv` cuida do ambiente Python:
-
-```bash
-brew install ffmpeg espeak-ng uv
-```
-
-2. Baixe o repositório:
+Precisa do [Homebrew](https://brew.sh). Com ele instalado, são dois comandos:
 
 ```bash
 git clone https://github.com/daniloblima/book-to-audio.git
-cd book-to-audio
+cd book-to-audio && ./instalar.sh
 ```
 
-3. Baixe os modelos de voz. O script busca os arquivos na página oficial do kokoro-onnx, cerca de 350 MB, e confere a integridade de cada um. Os modelos ficam na pasta `modelos/`, que não vai para o repositório:
+O `instalar.sh` faz, em ordem, e pula o que já estiver feito:
 
-```bash
-./baixar_modelos.sh
-```
-
-4. Crie o ambiente Python. O `uv` instala a versão certa do Python e as bibliotecas com as versões exatas registradas no `uv.lock`, sem mexer no Python do sistema:
-
-```bash
-uv sync
-```
+1. instala pelo Homebrew o `ffmpeg` (monta o MP3), o `espeak-ng` (converte o texto em fonemas para a voz) e o `uv` (cuida do ambiente Python sem mexer no Python do sistema);
+2. baixa os modelos de voz da página oficial do kokoro-onnx, cerca de 350 MB, e confere a integridade de cada arquivo (`baixar_modelos.sh`). Os modelos ficam em `modelos/`, fora do repositório;
+3. cria o ambiente Python com as versões exatas registradas no `uv.lock` (`uv sync`);
+4. se o [Claude Code](https://claude.com/claude-code) estiver instalado, liga a skill `/audiolivro` em `~/.claude/skills/`.
 
 Na primeira conversão, o Docling baixa também os seus modelos de análise de layout. Isso acontece uma vez só.
 
-## Uso
+## Uso pelo Claude Code: `/audiolivro`
+
+Com a skill ligada, basta pedir numa sessão nova do Claude Code, em qualquer pasta:
+
+```
+/audiolivro transforma em áudio o artigo da Feldman sobre creative destruction
+```
+
+Ou sem o comando: "quero ouvir esse PDF no carro", "gera o MP3 desse capítulo". A skill:
+
+1. no primeiro uso, pergunta em que pasta você quer os áudios e grava a resposta em `~/.claude/.env` (`BOOK_TO_AUDIO_SAIDA`). Vale escolher uma pasta sincronizada com o celular, porque é por ela que você vê as figuras enquanto ouve;
+2. acha o documento pelo caminho ou pelo nome, com o Spotlight, e pergunta quando houver mais de um candidato;
+3. descobre título, autor e língua pela primeira página;
+4. monta o roteiro sem gerar voz, confere se sobrou ruído de capa ou de página e mostra capítulos e duração estimada. Se o áudio passar de 1 hora, para e pede confirmação antes de gastar o tempo de síntese;
+5. gera a voz e diz onde ficou o MP3.
+
+## Uso pela linha de comando
 
 Um artigo ou capítulo em inglês:
 
@@ -88,7 +91,7 @@ Um texto em português:
 uv run gerar_audio.py capitulo.pdf --lingua pt --titulo "Impacto socioeconômico da Unicamp" --autor "Serra, Cunha e Laplane"
 ```
 
-O resultado vai para `saida/<nome do documento>/`: o MP3, o `roteiro.txt` e a pasta `figuras/`. Título e autor são opcionais, e sem eles o áudio anuncia o nome do arquivo. Para mandar tudo para outra pasta por padrão (uma pasta sincronizada com o celular, por exemplo), defina a variável `BOOK_TO_AUDIO_SAIDA`. Os arquivos intermediários ficam em `.trabalho/`, dentro do projeto.
+O resultado vai para `<pasta de saída>/<nome do documento>/`: o MP3, o `roteiro.txt` e a pasta `figuras/`. Título e autor são opcionais, e sem eles o áudio anuncia o nome do arquivo. A pasta de saída é `saida/`, dentro do projeto, até você escolher outra com `uv run gerar_audio.py --definir-pasta ~/Audiolivros` (grava em `~/.claude/.env`) ou pela variável de ambiente `BOOK_TO_AUDIO_SAIDA`. Os arquivos intermediários ficam em `.trabalho/`, dentro do projeto, e a extração de um PDF é reaproveitada na conversão seguinte do mesmo arquivo.
 
 Todas as opções:
 
@@ -97,10 +100,13 @@ Todas as opções:
 | `--lingua en` ou `pt` | língua do texto, que define a voz | `en` |
 | `--titulo`, `--autor` | anunciados na abertura e gravados nos metadados do MP3 | nome do arquivo |
 | `--voz` | troca a voz (ver abaixo) | `af_heart` em inglês, `pf_dora` em português |
-| `--saida` | pasta onde cada documento ganha a sua subpasta | `$BOOK_TO_AUDIO_SAIDA` ou `saida/` |
+| `--saida` | pasta onde cada documento ganha a sua subpasta | a definida, ou `saida/` |
 | `--nome` | nome do MP3, sem extensão | nome do arquivo de entrada |
 | `--motor say` | usa a voz do próprio macOS no lugar do Kokoro, muito mais rápida e bem mais robótica | `kokoro` |
 | `--sem-capitulos-de-figura` | não abre capítulo em cada figura anunciada | capítulos de figura ligados |
+| `--identificar` | só mostra páginas, metadados, língua provável e o início do texto | |
+| `--so-roteiro` | para depois do roteiro: capítulos, palavras e duração estimada, sem gerar voz | |
+| `--mostrar-pasta`, `--definir-pasta` | mostra ou grava a pasta de saída | |
 
 A entrada também pode ser o `.json` ou o `.md` já extraídos pelo Docling (ficam em `.trabalho/<nome>/`), o que permite corrigir o texto à mão antes de gerar a voz. Sem o PDF, as figuras são anunciadas mas não recortadas.
 
@@ -149,6 +155,8 @@ Medido num M3 Pro, só com o processador:
 | Arquivo | O que é |
 |---|---|
 | `gerar_audio.py` | o programa inteiro: extração, roteiro, voz e montagem |
+| `instalar.sh` | instala tudo e liga a skill |
+| `skill/SKILL.md` | a skill `/audiolivro` do Claude Code |
 | `baixar_modelos.sh` | baixa e confere os modelos de voz |
 | `pyproject.toml`, `uv.lock` | dependências, com versões exatas |
 | `CHANGELOG.md` | cada versão, o que mudou e por quê, incluindo os problemas encontrados e como foram resolvidos |

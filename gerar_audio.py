@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""book-to-audio 0.2.0 — PDF para MP3 com capítulos, figuras e tabelas.
+"""book-to-audio 0.3.0 — PDF para MP3 com capítulos, figuras e tabelas.
 
 Fluxo: PDF -> Docling (texto estruturado em JSON) -> roteiro (o que se fala, por
 capítulo) -> voz do Kokoro (ou do `say` do macOS) -> MP3 com capítulos ID3v2.
@@ -45,6 +45,12 @@ RUIDO = re.compile(
     r"^(CONTACT\b|Correspondence|E-?mail\b|©|To cite this article|To link to this article|"
     r"Published online|Article views|View Crossmark|Supplemental data|∂ OPEN ACCESS|"
     r"JEL\b|HISTORY\b|Received\b|ISSN\b|This is an Open Access article)", re.IGNORECASE)
+# Aviso de licença da editora, inteiro ou em pedaço (a continuação começa em minúscula e
+# seria emendada no parágrafo anterior pela regra de parágrafo partido).
+LICENCA = re.compile(r"creativecommons\.org|\bnc-nd/|which permits (unrestricted |non-commercial )?re-?use|"
+                     r"distributed under the terms of the Creative Commons", re.IGNORECASE)
+# Hífen de fim de linha que a extração deixou solto: "so - ciais", "Amé - rica".
+HIFEN_SOLTO = re.compile(r"\b([A-Za-zÀ-ÿ]{1,6}) - ([a-zà-ÿ]{2,})")
 # Citação autor-ano entre parênteses: "(Martin & Sunley, 2022; Zhu et al., 2019)".
 CITACAO_PARENTESES = re.compile(r"\s*\([^()]*\b(1[89]|20)\d{2}[a-z]?\b[^()]*\)")
 # Ano solto depois do nome: "Schumpeter (1934)" vira "Schumpeter".
@@ -72,6 +78,7 @@ def log(msg):
 
 def limpar(texto):
     texto = html.unescape(texto)
+    texto = HIFEN_SOLTO.sub(r"\1\2", texto)
     texto = CITACAO_PARENTESES.sub("", texto)
     texto = ANO_ENTRE_PARENTESES.sub("", texto)
     texto = re.sub(r"\s+([,.;:])", r"\1", texto)
@@ -259,7 +266,7 @@ def montar_roteiro(blocos, titulo, autor, lingua):
             continue
 
         # Texto sem palavra nenhuma ("1.00") costuma ser rótulo de eixo solto de um gráfico.
-        if tipo == "texto" and (RUIDO.match(texto) or AFILIACAO.match(texto)
+        if tipo == "texto" and (RUIDO.match(texto) or AFILIACAO.match(texto) or LICENCA.search(texto)
                                 or re.sub(r"\d+", "#", texto) in corridos
                                 or not re.search(r"[A-Za-zÀ-ÿ]{2,}", texto)):
             descartadas += 1
@@ -470,12 +477,76 @@ def conferir_extracao(texto):
         log(f"conferência da extração: ok ({len(suspeitas)} palavras suspeitas)")
 
 
+# ---------------------------------------------------------------- pasta de saída
+
+ENV_CLAUDE = Path.home() / ".claude" / ".env"
+
+
+def resolver_pasta(raiz):
+    """(pasta, origem). Ordem: variável de ambiente, ~/.claude/.env, saida/ do projeto."""
+    valor = os.environ.get("BOOK_TO_AUDIO_SAIDA", "").strip()
+    if valor:
+        return Path(valor).expanduser().resolve(), "ambiente"
+    if ENV_CLAUDE.exists():
+        for linha in ENV_CLAUDE.read_text(encoding="utf-8").splitlines():
+            if linha.strip().startswith("BOOK_TO_AUDIO_SAIDA="):
+                valor = linha.split("=", 1)[1].strip().strip('"').strip("'")
+                if valor:
+                    return Path(valor).expanduser().resolve(), "env"
+    return raiz / "saida", "padrão"
+
+
+def definir_pasta(caminho):
+    pasta = Path(caminho).expanduser().resolve()
+    pasta.mkdir(parents=True, exist_ok=True)
+    ENV_CLAUDE.parent.mkdir(parents=True, exist_ok=True)
+    linhas = ENV_CLAUDE.read_text(encoding="utf-8").splitlines() if ENV_CLAUDE.exists() else []
+    linhas = [l for l in linhas if not l.strip().startswith("BOOK_TO_AUDIO_SAIDA=")]
+    linhas.append(f"BOOK_TO_AUDIO_SAIDA={pasta}")
+    ENV_CLAUDE.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    os.chmod(ENV_CLAUDE, 0o600)
+    return pasta
+
+
+# ---------------------------------------------------------------- identificação
+
+PALAVRAS_PT = {"de", "que", "não", "para", "com", "uma", "os", "as", "dos", "das", "se", "por", "mais", "como", "é", "são", "também", "pela", "pelo"}
+PALAVRAS_EN = {"the", "of", "and", "to", "in", "is", "that", "for", "with", "as", "are", "this", "by", "which", "on", "be", "from", "it"}
+
+
+def identificar(pdf):
+    """Dados brutos para decidir título, autor e língua. A interpretação fica com quem chama."""
+    import pypdfium2 as pdfium
+    doc = pdfium.PdfDocument(str(pdf))
+    meta = {k: v for k, v in doc.get_metadata_dict().items() if k in ("Title", "Author", "Subject") and v}
+    textos = []
+    for i in range(min(len(doc), 3)):
+        textos.append(doc[i].get_textpage().get_text_range())
+    palavras = re.findall(r"[a-zà-ÿ]+", " ".join(textos).lower())
+    pt = sum(1 for w in palavras if w in PALAVRAS_PT)
+    en = sum(1 for w in palavras if w in PALAVRAS_EN)
+    lingua = "pt" if pt > en else "en"
+    print(f"arquivo: {pdf}")
+    print(f"páginas: {len(doc)}")
+    for k, v in meta.items():
+        print(f"metadado {k}: {v[:300]}")
+    print(f"língua provável: {lingua} (palavras frequentes: pt={pt}, en={en})")
+    print("início da primeira página:")
+    print(re.sub(r"\s+", " ", textos[0])[:1200] if textos else "(sem texto: PDF escaneado?)")
+
+
 # ---------------------------------------------------------------- principal
 
 def main():
     raiz = Path(__file__).resolve().parent
     ap = argparse.ArgumentParser(description="PDF para MP3 com capítulos.")
-    ap.add_argument("entrada", help="arquivo .pdf, ou .json/.md já extraído pelo Docling")
+    ap.add_argument("entrada", nargs="?", help="arquivo .pdf, ou .json/.md já extraído pelo Docling")
+    ap.add_argument("--identificar", action="store_true",
+                    help="só mostra páginas, metadados, língua provável e o início do texto")
+    ap.add_argument("--so-roteiro", action="store_true",
+                    help="para depois do roteiro: mostra capítulos e duração estimada, sem gerar voz")
+    ap.add_argument("--mostrar-pasta", action="store_true", help="mostra a pasta de saída e de onde ela vem")
+    ap.add_argument("--definir-pasta", metavar="CAMINHO", help="grava a pasta de saída em ~/.claude/.env")
     ap.add_argument("--lingua", choices=["en", "pt"], default="en", help="língua do texto (padrão: en)")
     ap.add_argument("--titulo", help="padrão: nome do arquivo")
     ap.add_argument("--autor", default="")
@@ -484,16 +555,29 @@ def main():
     ap.add_argument("--modelos", default=str(raiz / "modelos"),
                     help="pasta com kokoro-v1.0.onnx e voices-v1.0.bin (padrão: modelos/)")
     ap.add_argument("--velocidade", type=int, default=185, help="palavras por minuto do say")
-    ap.add_argument("--saida", default=os.environ.get("BOOK_TO_AUDIO_SAIDA", "saida"),
-                    help="pasta onde cada obra ganha uma subpasta (padrão: $BOOK_TO_AUDIO_SAIDA ou saida/)")
+    ap.add_argument("--saida", help="pasta onde cada obra ganha uma subpasta "
+                    "(padrão: BOOK_TO_AUDIO_SAIDA no ambiente ou em ~/.claude/.env, senão saida/ no projeto)")
     ap.add_argument("--nome", help="nome do MP3, sem extensão (padrão: nome do arquivo de entrada)")
     ap.add_argument("--sem-capitulos-de-figura", action="store_true",
                     help="não cria marca de capítulo com imagem em cada figura anunciada")
     a = ap.parse_args()
 
-    entrada = Path(a.entrada)
+    if a.definir_pasta:
+        print(f"pasta definida: {definir_pasta(a.definir_pasta)}")
+        return
+    if a.mostrar_pasta:
+        pasta, origem = resolver_pasta(raiz)
+        print(f"pasta: {pasta}")
+        print(f"escolhida pelo usuário: {'não' if origem == 'padrão' else 'sim'} (origem: {origem})")
+        return
+    if not a.entrada:
+        ap.error("informe o arquivo de entrada")
+    entrada = Path(a.entrada).expanduser()
     if not entrada.exists():
         ap.error(f"arquivo não encontrado: {entrada}")
+    if a.identificar:
+        identificar(entrada)
+        return
     a.titulo = a.titulo or entrada.stem
     a.nome = a.nome or entrada.stem
     if not a.voz:
@@ -505,7 +589,7 @@ def main():
 
     # Cada obra tem a própria pasta; os intermediários (WAV por capítulo) ficam
     # fora dela, em .trabalho/ no projeto, para não pesar numa pasta sincronizada.
-    saida = Path(a.saida).expanduser() / a.nome
+    saida = (Path(a.saida).expanduser() if a.saida else resolver_pasta(raiz)[0]) / a.nome
     saida.mkdir(parents=True, exist_ok=True)
     trab = raiz / ".trabalho" / a.nome
     trab.mkdir(parents=True, exist_ok=True)
@@ -513,7 +597,11 @@ def main():
 
     sufixo = entrada.suffix.lower()
     if sufixo == ".pdf":
-        arq_json, arq_md = extrair_pdf(entrada, trab)
+        arq_json, arq_md = trab / f"{entrada.stem}.json", trab / f"{entrada.stem}.md"
+        if arq_json.exists() and arq_md.exists() and arq_json.stat().st_mtime >= entrada.stat().st_mtime:
+            log("extração já feita antes para este arquivo; reaproveitando")
+        else:
+            arq_json, arq_md = extrair_pdf(entrada, trab)
         conferir_extracao(arq_md.read_text(encoding="utf-8"))
         blocos = blocos_do_json(arq_json)
     elif sufixo == ".json":
@@ -534,6 +622,18 @@ def main():
             f.write(f"===== Capítulo {i}: {nome} ({len(falado.split())} palavras)\n\n{falado}\n\n")
             log(f"capítulo {i}: {nome} — {len(falado.split())} palavras")
     log(f"roteiro gravado em {roteiro}")
+
+    if a.so_roteiro:
+        # Medido com o Kokoro em 23/09/2026: 113 e 138 palavras por minuto nos dois documentos
+        # de referência, contando pausas. 110 erra para mais, de propósito.
+        ppm = 110 if a.motor == "kokoro" else a.velocidade
+        palavras = sum(len(re.sub(r"\[\[.*?\]\]", "", t).split()) for _, t in capitulos)
+        minutos = palavras / ppm
+        geracao = minutos / 5 if a.motor == "kokoro" else minutos / 90
+        print(f"RESUMO capítulos={len(capitulos)} palavras={palavras} "
+              f"duração_estimada_min={minutos:.0f} geração_estimada_min={geracao:.0f} "
+              f"figuras_e_tabelas={len(legendas)} roteiro={roteiro} pasta={saida}")
+        return
 
     rot = ROTULOS[a.lingua]
     wavs, marcas_finais, inicio = [], [], 0
