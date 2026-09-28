@@ -72,12 +72,13 @@ Abra o `roteiro.txt` e leia o começo de dois ou três capítulos. Você está p
 
 ## Passo 5 — Voz e entrega
 
-Rode o mesmo comando do passo 4 sem `--so-roteiro`, em segundo plano, e diga ao usuário quanto tempo deve levar. Acompanhe até aparecer `MP3 pronto` no log e só então entregue: o usuário quer o arquivo, não a promessa de que ele vai sair, e uma sessão que termina antes pode levar a síntese junto. A voz padrão é `af_heart` em inglês e `pf_dora` em português, escolhidas por escuta. Só passe `--voz` se o usuário pedir outra.
+Rode o mesmo comando do passo 4 sem `--so-roteiro`, em segundo plano, e diga ao usuário quanto tempo deve levar. Acompanhe até aparecer `MP3 pronto` no log e só então entregue: o usuário quer o arquivo, não a promessa de que ele vai sair, e uma sessão que termina antes pode levar a síntese junto. O motor escolhe a voz sozinho (`--motor auto`): em português, a voz do próprio usuário pelo OmniVoice, se ele gravou uma referência (`--mostrar-pasta` diz se há); sem referência, e em inglês, o Kokoro (`pf_dora` e `af_heart`). Com o OmniVoice a geração leva cerca de duas vezes a duração do áudio (40 minutos de áudio em 82 minutos, medido em 28/09/2026), porque o texto vai em trechos curtos e cada um é conferido pelo Whisper; avise o usuário desse tempo antes. O log mostra o progresso a cada 50 trechos. Só passe `--voz` ou `--motor` se ele pedir outra voz.
 
 Ao terminar, a última linha do log diz `MP3 pronto`, com duração e número de capítulos. Entregue em poucas linhas:
 
 - onde está o MP3 e a pasta `figuras/`, se houver figuras;
 - duração e capítulos;
+- com o OmniVoice, o resumo da conferência (última linha com `conferência:`). Se houver trechos incompletos, diga quantos e que estão listados em `conferencia.txt`, na pasta do documento, com o texto e o que foi ouvido;
 - como ouvir: copiar o MP3 para a pasta que o tocador de podcast lê. No Podcast Addict, é a pasta de um "Virtual Podcast"; ele guarda a posição de escuta e mostra os capítulos.
 
 ## Quando algo dá errado

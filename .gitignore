@@ -15,7 +15,7 @@ saida/
 # Planejamento interno do autor
 00_INDICE_*.md
 00_SINTESE_*.md
-01-*.md
+[0-9][0-9]-*.md
 pesquisa/
 
 # Sistema
@@ -24,3 +24,6 @@ __pycache__/
 
 # Registro de defeitos durante o uso: cita documentos reais
 BACKLOG*.md
+
+# Vozes de referência: gravação da voz de uma pessoa funciona como senha
+vozes/

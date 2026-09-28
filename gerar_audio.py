@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""book-to-audio 0.3.0 — PDF para MP3 com capítulos, figuras e tabelas.
+"""book-to-audio 0.4.0 — PDF para MP3 com capítulos, figuras e tabelas.
 
 Fluxo: PDF -> Docling (texto estruturado em JSON) -> roteiro (o que se fala, por
 capítulo) -> voz do Kokoro (ou do `say` do macOS) -> MP3 com capítulos ID3v2.
@@ -22,6 +22,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,7 +45,8 @@ AFILIACAO = re.compile(r"^(?=.{0,120}$)(?!.*\.$).*\b(University|Universidade|Uni
 RUIDO = re.compile(
     r"^(CONTACT\b|Correspondence|E-?mail\b|©|To cite this article|To link to this article|"
     r"Published online|Article views|View Crossmark|Supplemental data|∂ OPEN ACCESS|"
-    r"JEL\b|HISTORY\b|Received\b|ISSN\b|This is an Open Access article)", re.IGNORECASE)
+    r"JEL\b|HISTORY\b|Received\b|ISSN\b|This is an Open Access article|"
+    r"(Fonte|Nota|Notas|Source|Note)\s*:(?=.{0,200}$))", re.IGNORECASE)
 # Aviso de licença da editora, inteiro ou em pedaço (a continuação começa em minúscula e
 # seria emendada no parágrafo anterior pela regra de parágrafo partido).
 LICENCA = re.compile(r"creativecommons\.org|\bnc-nd/|which permits (unrestricted |non-commercial )?re-?use|"
@@ -76,8 +78,15 @@ def log(msg):
     print(f"[gerar_audio] {msg}", flush=True)
 
 
+# Barra entre palavras não tem som: "Nacional/Capes" saía emendado. Vira pausa curta.
+# Unidades de uma letra (km/h, m/s) ficam de fora, porque o lado direito tem uma letra só.
+BARRA = re.compile(r"(?<=[A-Za-zÀ-ÿ]{2})\s?/\s?(?=[A-Za-zÀ-ÿ]{2})")
+
+
 def limpar(texto):
     texto = html.unescape(texto)
+    texto = re.sub(r"\be/ou\b", "e ou", texto)
+    texto = BARRA.sub(", ", texto)
     texto = HIFEN_SOLTO.sub(r"\1\2", texto)
     texto = CITACAO_PARENTESES.sub("", texto)
     texto = ANO_ENTRE_PARENTESES.sub("", texto)
@@ -236,6 +245,7 @@ def montar_roteiro(blocos, titulo, autor, lingua):
     tem_secoes = any(b["tipo"] == "titulo" and SECAO_PRINCIPAL.match(limpar(b["texto"]))
                      for b in blocos)
     no_corpo = False       # já passou da capa e do resumo
+    titulo_doc = titulo
     no_resumo = False
     primeiro_titulo = False
     descartadas = 0
@@ -253,6 +263,8 @@ def montar_roteiro(blocos, titulo, autor, lingua):
                 elif not tem_secoes and primeiro_titulo:
                     no_corpo = True
                 else:
+                    if not primeiro_titulo:
+                        titulo_doc = cab
                     primeiro_titulo = True
                     no_resumo = bool(RESUMO.match(cab))
                     continue
@@ -260,6 +272,10 @@ def montar_roteiro(blocos, titulo, autor, lingua):
             if SECAO_PRINCIPAL.match(cab) and not SUBSECAO.match(cab):
                 nome = re.sub(r"^\d+\.?\s+", "", cab)
                 capitulos.append([nome, [f"{nome}.", PAUSA_CAPITULO]])
+            elif not tem_secoes and len(cab.split()) <= 6:
+                # Documento sem numeração: título curto ("Introdução", "Base de dados") abre
+                # capítulo. Título longo costuma ser de tabela ou figura mal marcado.
+                capitulos.append([cab, [f"{cab}.", PAUSA_CAPITULO]])
             else:
                 sub = SUBSECAO.sub("", cab)
                 capitulos[-1][1] += [PAUSA_SUBTITULO, f"{sub}.", PAUSA_SUBTITULO]
@@ -271,6 +287,14 @@ def montar_roteiro(blocos, titulo, autor, lingua):
                                 or not re.search(r"[A-Za-zÀ-ÿ]{2,}", texto)):
             descartadas += 1
             continue
+        # Sem seção numerada, o corpo começava só no segundo título. Capítulo de livro com um
+        # título só e nenhuma seção interna ficava inteiro como "capa" (15 palavras de roteiro,
+        # BACKLOG de 25/09/2026). Agora o primeiro parágrafo longo depois do título abre o corpo.
+        if (not no_corpo and not tem_secoes and primeiro_titulo and tipo == "texto"
+                and not no_resumo and len(texto.split()) >= 40):
+            no_corpo = True
+            # Capítulo próprio com o título do documento, sem falar o título de novo.
+            capitulos.append([titulo_doc, [PAUSA_CAPITULO]])
         if not no_corpo:
             # Da capa só se lê o resumo.
             if no_resumo and tipo == "texto":
@@ -416,6 +440,235 @@ def sintetizar_kokoro(texto, wav, voz, lingua, modelos):
     return marcas
 
 
+# ---------------------------------------------------------------- voz própria (OmniVoice)
+# Clona a voz a partir de uma gravação curta (5 a 10 s) com a transcrição num .txt de
+# mesmo nome. Modelo: ajuste pt-BR do OmniVoice (k2-fsa), pesos de uso não comercial.
+# Medido em 28/09/2026 num M3 Pro: cerca de 0,8 do tempo real com referência de 7 a 10 s.
+# O modelo pula palavras em frase longa, sobretudo com aparte entre travessões: por isso
+# o texto vai em trechos curtos e cada trecho é conferido pelo Whisper.
+
+OMNIVOICE_MODELO = "edwixx/omnivoice-brpt-v15"
+# Pausas e cortes revistos em 28/09/2026 depois da escuta do capítulo inteiro: cortar na
+# vírgula punha entonação de fim de frase e pausa longa no meio da frase, e 0,25 s entre
+# frases soava corrido. Agora só frase muito longa é cortada na vírgula, o silêncio que o
+# modelo deixa em cada ponta é aparado (com rampa, para não estalar) e as pausas seguem a
+# narração humana: cerca de 0,5 s entre frases e 1 s entre parágrafos.
+TRECHO_MAXIMO = 350          # caracteres; só acima disso a frase é cortada numa vírgula
+PAUSA_TRECHO, PAUSA_FRASE, PAUSA_PARAGRAFO = 0.3, 0.5, 0.45   # a do parágrafo soma à da frase
+
+_omni = None
+
+
+def _cortar_longa(p, maximo):
+    if len(p) <= maximo:
+        return [p]
+    virgulas = [m.end() for m in re.finditer(r",\s", p) if 40 <= m.end() <= len(p) - 40]
+    if not virgulas:
+        return [p]
+    i = min(virgulas, key=lambda x: abs(x - len(p) / 2))
+    return _cortar_longa(p[:i].strip(), maximo) + _cortar_longa(p[i:].strip(), maximo)
+
+
+def encurtar_silencios(a, sr, limiar, maximo=0.30, alvo=0.22, janela=0.01):
+    """Dentro de um trecho, silêncio acima de `maximo` vira `alvo` segundos. O modelo às
+    vezes exagera a pausa numa vírgula (0,43 s antes de "tema", 28/09/2026), e no meio da
+    frase isso quebra o sentido. As pausas entre frases são postas depois, fora daqui."""
+    import numpy as np
+    n = int(sr * janela)
+    if len(a) < n * 3:
+        return a
+    quadros = np.abs(a[: len(a) // n * n]).reshape(-1, n).max(axis=1) <= limiar
+    partes, i, ultimo = [], 0, 0
+    while i < len(quadros):
+        if quadros[i]:
+            j = i
+            while j < len(quadros) and quadros[j]:
+                j += 1
+            if (j - i) * janela > maximo:
+                meio = int(sr * alvo / 2)
+                partes.append(a[ultimo : i * n + meio])
+                ultimo = j * n - meio
+            i = j
+        else:
+            i += 1
+    partes.append(a[ultimo:])
+    return np.concatenate(partes)
+
+
+def aparar(audio, sr=24000, limiar_db=-55, folga=0.03, folga_fim=0.15, rampa=0.02):
+    """Tira o silêncio do começo e do fim e suaviza as pontas, para a pausa ser a nossa."""
+    import numpy as np
+    if not len(audio):
+        return audio
+    limiar = np.abs(audio).max() * 10 ** (limiar_db / 20)
+    idx = np.where(np.abs(audio) > limiar)[0]
+    if not len(idx):
+        return audio
+    ini = max(idx[0] - int(sr * folga), 0)
+    # Folga maior no fim: a última sílaba costuma ser dita baixo. Com -40 dB e 30 ms,
+    # "tema" saiu cortado ao meio (28/09/2026).
+    fim = min(idx[-1] + int(sr * folga_fim), len(audio))
+    a = audio[ini:fim].copy()
+    a = encurtar_silencios(a, sr, limiar)
+    n = min(int(sr * rampa), len(a) // 2)
+    if n:
+        a[:n] *= np.linspace(0, 1, n, dtype=a.dtype)
+        a[-n:] *= np.linspace(1, 0, n, dtype=a.dtype)
+    return a
+
+
+def fragmentar(frase, maximo=TRECHO_MAXIMO):
+    """Frase em trechos: corta nos travessões com espaço e nos ponto e vírgula, e depois
+    corta numa vírgula perto do meio o que ainda passar de `maximo` caracteres."""
+    trechos = []
+    for parte in re.split(r"\s+[–—],?\s+|;\s+", frase):
+        parte = parte.strip(" ,–—")
+        if parte:
+            trechos += _cortar_longa(parte, maximo)
+    return trechos
+
+
+def _palavras(t):
+    return re.findall(r"[0-9a-zà-ÿ]+(?:[.,][0-9]+)*", t.lower().replace("/", " "))
+
+
+def conferir_trecho(original, transcrito):
+    """(cobertura, razão): parte das palavras do original reconhecida na transcrição, e
+    tamanho da transcrição sobre o original (acima de 1,4 sugere repetição)."""
+    import difflib
+    a, b = _palavras(original), _palavras(transcrito)
+    if not a:
+        return 1.0, 1.0
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    return sum(m.size for m in sm.get_matching_blocks()) / len(a), len(b) / len(a)
+
+
+class Conferente:
+    """Mantém o whisper-server carregado e transcreve cada trecho gerado."""
+
+    def __init__(self, modelo, lingua, trab):
+        import socket
+        import time
+        import urllib.request
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        self.porta = s.getsockname()[1]
+        s.close()
+        self.tmp = trab / "conferencia.wav"
+        self.proc = subprocess.Popen(["whisper-server", "-m", str(modelo), "-l", lingua,
+                                      "--port", str(self.porta), "-t", "6"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        limite = time.time() + 120
+        while time.time() < limite:
+            if self.proc.poll() is not None:
+                raise RuntimeError("whisper-server encerrou ao iniciar")
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{self.porta}/", timeout=2)
+                return
+            except Exception:
+                time.sleep(0.5)
+        raise RuntimeError("whisper-server não respondeu em 120 s")
+
+    def transcrever(self, audio, sr):
+        import librosa
+        import soundfile as sf
+        sf.write(str(self.tmp), librosa.resample(audio, orig_sr=sr, target_sr=16000), 16000,
+                 subtype="PCM_16")
+        r = subprocess.run(["curl", "-s", "--max-time", "120", f"http://127.0.0.1:{self.porta}/inference",
+                            "-F", f"file=@{self.tmp}", "-F", "response_format=json",
+                            "-F", "temperature=0.0"], capture_output=True, text=True)
+        try:
+            return json.loads(r.stdout).get("text", "")
+        except json.JSONDecodeError:
+            log(f"conferência: resposta inválida do whisper-server: {r.stdout[:200]} {r.stderr[:200]}")
+            return ""
+
+    def fechar(self):
+        self.proc.terminate()
+
+
+def carregar_omnivoice(referencia):
+    global _omni
+    if _omni is None:
+        import torch
+        from omnivoice import OmniVoice
+        disp = "mps" if torch.backends.mps.is_available() else "cpu"
+        log(f"carregando o OmniVoice ({OMNIVOICE_MODELO}) em {disp}")
+        modelo = OmniVoice.from_pretrained(OMNIVOICE_MODELO, device_map=disp,
+                                           dtype=torch.float16 if disp == "mps" else torch.float32)
+        texto_ref = referencia.with_suffix(".txt").read_text(encoding="utf-8").strip()
+        _omni = (modelo, modelo.create_voice_clone_prompt(ref_audio=str(referencia), ref_text=texto_ref))
+    return _omni
+
+
+def gerar_conferido(texto, lingua, conferente, falhas, capitulo, contagem, tentativas=3):
+    """Gera um trecho; se a conferência achar palavra faltando ou repetição, gera de novo
+    (até `tentativas` vezes) e fica com a melhor versão."""
+    import numpy as np
+    modelo, prompt = _omni
+    melhor = None
+    for _ in range(tentativas):
+        a = modelo.generate(text=texto, language=lingua, voice_clone_prompt=prompt)
+        a = np.asarray(a[0] if isinstance(a, (list, tuple)) else a, dtype=np.float32).squeeze()
+        if conferente is None:
+            return a
+        transcrito = conferente.transcrever(a, 24000)
+        cob, raz = conferir_trecho(texto, transcrito)
+        n = len(_palavras(texto))
+        # Até 3 palavras o Whisper erra mais que o modelo: aceita sem conferir.
+        ok = n <= 3 or (cob >= (0.5 if n < 6 else 0.8) and raz <= 1.4)
+        nota = (ok, cob, -abs(raz - 1))
+        if melhor is None or nota > melhor[0]:
+            melhor = (nota, a, transcrito, cob, raz)
+        if ok:
+            break
+        contagem["refeitos"] += 1
+    contagem["trechos"] += 1
+    if contagem["trechos"] % 50 == 0:
+        log(f"  {contagem['trechos']} trechos gerados, {contagem['refeitos']} refeitos")
+    if not melhor[0][0]:
+        falhas.append((capitulo, texto, melhor[2].strip(), melhor[3], melhor[4]))
+    return melhor[1]
+
+
+def sintetizar_omnivoice(texto, wav, referencia, lingua, conferente, falhas, capitulo, contagem):
+    """Mesmo contrato do sintetizar_kokoro: grava o WAV e devolve as marcas de figura."""
+    import numpy as np
+    import soundfile as sf
+    carregar_omnivoice(referencia)
+    sr = 24000
+    blocos, total, marcas, figura = [], 0, [], None
+
+    def por(a):
+        nonlocal total
+        blocos.append(a)
+        total += len(a)
+
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        if not linha:
+            continue
+        fig = re.fullmatch(r"\[\[fig (\S+)\]\]", linha)
+        if fig:
+            figura = (fig.group(1), total)
+            continue
+        pausa = re.fullmatch(r"\[\[slnc (\d+)\]\]", linha)
+        if pausa:
+            por(np.zeros(int(sr * int(pausa.group(1)) / 1000), dtype=np.float32))
+            continue
+        for frase in [f for f in re.split(r"(?<=[.!?])\s+", linha) if f.strip()]:
+            trechos = fragmentar(frase)
+            for i, trecho in enumerate(trechos):
+                por(aparar(gerar_conferido(trecho, lingua, conferente, falhas, capitulo, contagem)))
+                por(np.zeros(int(sr * (PAUSA_TRECHO if i < len(trechos) - 1 else PAUSA_FRASE)), dtype=np.float32))
+        if figura:
+            marcas.append((figura[0], figura[1] * 1000 // sr, total * 1000 // sr))
+            figura = None
+        por(np.zeros(int(sr * PAUSA_PARAGRAFO), dtype=np.float32))
+    sf.write(str(wav), np.concatenate(blocos), sr)
+    return marcas
+
+
 def gravar_capitulos(mp3, capitulos):
     """capitulos: [(início_ms, fim_ms, título, jpeg ou None)] -> CTOC + CHAP (ID3v2.3)."""
     from mutagen.id3 import ID3, CTOC, CHAP, TIT2, APIC, CTOCFlags
@@ -482,30 +735,48 @@ def conferir_extracao(texto):
 ENV_CLAUDE = Path.home() / ".claude" / ".env"
 
 
-def resolver_pasta(raiz):
-    """(pasta, origem). Ordem: variável de ambiente, ~/.claude/.env, saida/ do projeto."""
-    valor = os.environ.get("BOOK_TO_AUDIO_SAIDA", "").strip()
+def ler_config(chave):
+    """(valor, origem) de uma chave: variável de ambiente, depois ~/.claude/.env."""
+    valor = os.environ.get(chave, "").strip()
     if valor:
-        return Path(valor).expanduser().resolve(), "ambiente"
+        return valor, "ambiente"
     if ENV_CLAUDE.exists():
         for linha in ENV_CLAUDE.read_text(encoding="utf-8").splitlines():
-            if linha.strip().startswith("BOOK_TO_AUDIO_SAIDA="):
+            if linha.strip().startswith(f"{chave}="):
                 valor = linha.split("=", 1)[1].strip().strip('"').strip("'")
                 if valor:
-                    return Path(valor).expanduser().resolve(), "env"
+                    return valor, "env"
+    return "", "padrão"
+
+
+def gravar_config(chave, valor):
+    """Grava chave=valor em ~/.claude/.env (permissão 600), preservando as outras linhas."""
+    ENV_CLAUDE.parent.mkdir(parents=True, exist_ok=True)
+    linhas = ENV_CLAUDE.read_text(encoding="utf-8").splitlines() if ENV_CLAUDE.exists() else []
+    linhas = [l for l in linhas if not l.strip().startswith(f"{chave}=")]
+    linhas.append(f"{chave}={valor}")
+    ENV_CLAUDE.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    os.chmod(ENV_CLAUDE, 0o600)
+
+
+def resolver_pasta(raiz):
+    """(pasta, origem). Ordem: variável de ambiente, ~/.claude/.env, saida/ do projeto."""
+    valor, origem = ler_config("BOOK_TO_AUDIO_SAIDA")
+    if valor:
+        return Path(valor).expanduser().resolve(), origem
     return raiz / "saida", "padrão"
 
 
 def definir_pasta(caminho):
     pasta = Path(caminho).expanduser().resolve()
     pasta.mkdir(parents=True, exist_ok=True)
-    ENV_CLAUDE.parent.mkdir(parents=True, exist_ok=True)
-    linhas = ENV_CLAUDE.read_text(encoding="utf-8").splitlines() if ENV_CLAUDE.exists() else []
-    linhas = [l for l in linhas if not l.strip().startswith("BOOK_TO_AUDIO_SAIDA=")]
-    linhas.append(f"BOOK_TO_AUDIO_SAIDA={pasta}")
-    ENV_CLAUDE.write_text("\n".join(linhas) + "\n", encoding="utf-8")
-    os.chmod(ENV_CLAUDE, 0o600)
+    gravar_config("BOOK_TO_AUDIO_SAIDA", pasta)
     return pasta
+
+
+def resolver_caminho(chave):
+    valor, _ = ler_config(chave)
+    return Path(valor).expanduser().resolve() if valor else None
 
 
 # ---------------------------------------------------------------- identificação
@@ -550,8 +821,16 @@ def main():
     ap.add_argument("--lingua", choices=["en", "pt"], default="en", help="língua do texto (padrão: en)")
     ap.add_argument("--titulo", help="padrão: nome do arquivo")
     ap.add_argument("--autor", default="")
-    ap.add_argument("--motor", choices=["say", "kokoro"], default="kokoro")
-    ap.add_argument("--voz", help="padrão: af_heart (en) ou pf_dora (pt) no Kokoro; Samantha ou Luciana no say")
+    ap.add_argument("--motor", choices=["auto", "omnivoice", "kokoro", "say"], default="auto",
+                    help="auto: OmniVoice com a sua voz em português, se houver referência gravada; "
+                         "senão Kokoro")
+    ap.add_argument("--voz", help="Kokoro: af_heart (en) ou pf_dora (pt); say: Samantha ou Luciana")
+    ap.add_argument("--referencia", help="OmniVoice: gravação de referência (5 a 10 s), com a transcrição "
+                    "num .txt de mesmo nome (padrão: BOOK_TO_AUDIO_VOZ_PT)")
+    ap.add_argument("--sem-conferencia", action="store_true",
+                    help="OmniVoice: não confere cada trecho com o Whisper")
+    ap.add_argument("--definir-voz-pt", metavar="WAV", help="grava a referência de voz em português em ~/.claude/.env")
+    ap.add_argument("--definir-whisper", metavar="MODELO", help="grava o modelo ggml do Whisper usado na conferência")
     ap.add_argument("--modelos", default=str(raiz / "modelos"),
                     help="pasta com kokoro-v1.0.onnx e voices-v1.0.bin (padrão: modelos/)")
     ap.add_argument("--velocidade", type=int, default=185, help="palavras por minuto do say")
@@ -565,10 +844,26 @@ def main():
     if a.definir_pasta:
         print(f"pasta definida: {definir_pasta(a.definir_pasta)}")
         return
+    if a.definir_voz_pt:
+        ref = Path(a.definir_voz_pt).expanduser().resolve()
+        if not ref.exists() or not ref.with_suffix(".txt").exists():
+            ap.error(f"preciso do áudio e da transcrição num .txt de mesmo nome: {ref}")
+        gravar_config("BOOK_TO_AUDIO_VOZ_PT", ref)
+        print(f"voz em português definida: {ref}")
+        return
+    if a.definir_whisper:
+        modelo = Path(a.definir_whisper).expanduser().resolve()
+        if not modelo.exists():
+            ap.error(f"modelo não encontrado: {modelo}")
+        gravar_config("BOOK_TO_AUDIO_WHISPER", modelo)
+        print(f"modelo do Whisper definido: {modelo}")
+        return
     if a.mostrar_pasta:
         pasta, origem = resolver_pasta(raiz)
         print(f"pasta: {pasta}")
         print(f"escolhida pelo usuário: {'não' if origem == 'padrão' else 'sim'} (origem: {origem})")
+        print(f"voz em português: {resolver_caminho('BOOK_TO_AUDIO_VOZ_PT') or 'nenhuma (usa a Dora do Kokoro)'}")
+        print(f"Whisper para conferência: {resolver_caminho('BOOK_TO_AUDIO_WHISPER') or 'nenhum (sem conferência)'}")
         return
     if not a.entrada:
         ap.error("informe o arquivo de entrada")
@@ -580,7 +875,15 @@ def main():
         return
     a.titulo = a.titulo or entrada.stem
     a.nome = a.nome or entrada.stem
-    if not a.voz:
+    referencia = Path(a.referencia).expanduser().resolve() if a.referencia else resolver_caminho("BOOK_TO_AUDIO_VOZ_PT")
+    if a.motor == "auto":
+        a.motor = "omnivoice" if a.lingua == "pt" and referencia and referencia.exists() else "kokoro"
+    if a.motor == "omnivoice":
+        if not referencia or not referencia.exists() or not referencia.with_suffix(".txt").exists():
+            ap.error("OmniVoice precisa de uma gravação de referência e da transcrição num .txt de mesmo "
+                     "nome: use --referencia ou --definir-voz-pt")
+        a.voz = referencia.stem
+    elif not a.voz:
         a.voz = {("kokoro", "en"): "af_heart", ("kokoro", "pt"): "pf_dora",
                  ("say", "en"): "Samantha", ("say", "pt"): "Luciana"}[(a.motor, a.lingua)]
     if a.motor == "kokoro" and not (Path(a.modelos) / "kokoro-v1.0.onnx").exists():
@@ -624,12 +927,14 @@ def main():
     log(f"roteiro gravado em {roteiro}")
 
     if a.so_roteiro:
-        # Medido com o Kokoro em 23/09/2026: 113 e 138 palavras por minuto nos dois documentos
-        # de referência, contando pausas. 110 erra para mais, de propósito.
-        ppm = 110 if a.motor == "kokoro" else a.velocidade
+        # Kokoro, 23/09/2026: 113 e 138 palavras por minuto nos dois documentos de referência.
+        # OmniVoice com a referência rápida, 28/09/2026: 144. Os valores abaixo erram para mais.
+        # Velocidade de geração: Kokoro 5x o tempo real; OmniVoice 0,49x num capítulo inteiro
+        # (28/09/2026, 40,2 min em 82 min, com trechos curtos e conferência).
+        ppm = {"kokoro": 110, "omnivoice": 135}.get(a.motor, a.velocidade)
         palavras = sum(len(re.sub(r"\[\[.*?\]\]", "", t).split()) for _, t in capitulos)
         minutos = palavras / ppm
-        geracao = minutos / 5 if a.motor == "kokoro" else minutos / 90
+        geracao = minutos / {"kokoro": 5, "omnivoice": 0.45}.get(a.motor, 90)
         print(f"RESUMO capítulos={len(capitulos)} palavras={palavras} "
               f"duração_estimada_min={minutos:.0f} geração_estimada_min={geracao:.0f} "
               f"figuras_e_tabelas={len(legendas)} roteiro={roteiro} pasta={saida}")
@@ -637,6 +942,14 @@ def main():
 
     rot = ROTULOS[a.lingua]
     wavs, marcas_finais, inicio = [], [], 0
+    conferente, falhas, contagem = None, [], {"trechos": 0, "refeitos": 0}
+    if a.motor == "omnivoice" and not a.sem_conferencia:
+        modelo_whisper = resolver_caminho("BOOK_TO_AUDIO_WHISPER")
+        if not modelo_whisper or not modelo_whisper.exists() or not shutil.which("whisper-server"):
+            log("ATENÇÃO: sem whisper-server ou sem modelo (BOOK_TO_AUDIO_WHISPER): gerando sem conferência")
+        else:
+            conferente = Conferente(modelo_whisper, a.lingua, trab)
+            log(f"conferência ligada: {modelo_whisper.name}")
     for i, (nome, texto) in enumerate(capitulos):
         wav = trab / f"cap{i:02d}.wav"
         log(f"sintetizando capítulo {i} com a voz {a.voz}")
@@ -646,6 +959,10 @@ def main():
             rodar(["say", "-v", a.voz, "-r", str(a.velocidade), "-o", str(aiff), "-f", str(txt)])
             rodar(["ffmpeg", "-v", "error", "-y", "-i", str(aiff), "-ar", "24000", "-ac", "1", str(wav)])
             marcas = []
+        elif a.motor == "omnivoice":
+            marcas = sintetizar_omnivoice(texto, wav, referencia, a.lingua, conferente, falhas, nome, contagem)
+            log(f"  {contagem['trechos']} trechos até aqui, {contagem['refeitos']} refeitos, "
+                f"{len(falhas)} ainda incompletos")
         else:
             marcas = sintetizar_kokoro(texto, wav, a.voz, "en-us" if a.lingua == "en" else "pt-br", a.modelos)
         d = duracao_ms(wav)
@@ -661,6 +978,17 @@ def main():
                 marcas_finais.append((inicio + ini, inicio + fim, titulo, jpeg))
         inicio += d
         wavs.append(wav)
+
+    if conferente:
+        conferente.fechar()
+        rel = saida / "conferencia.txt"
+        linhas = [f"Conferência pelo Whisper: {contagem['trechos']} trechos, {contagem['refeitos']} gerações "
+                  f"refeitas, {len(falhas)} trechos que continuaram incompletos depois de 3 tentativas.", ""]
+        for cap, orig, transc, cob, raz in falhas:
+            linhas += [f"[{cap}] cobertura {cob:.0%}, tamanho {raz:.2f}", f"  texto:   {orig}", f"  ouvido:  {transc}", ""]
+        rel.write_text("\n".join(linhas), encoding="utf-8")
+        log(f"conferência: {contagem['trechos']} trechos, {contagem['refeitos']} refeitos, "
+            f"{len(falhas)} incompletos (detalhes em {rel})")
 
     lista = trab / "lista.txt"
     lista.write_text("".join(f"file '{w.resolve()}'\n" for w in wavs), encoding="utf-8")

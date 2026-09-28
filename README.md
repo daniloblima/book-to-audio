@@ -1,6 +1,6 @@
 # book-to-audio
 
-Versão 0.3.0, de 23/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
+Versão 0.4.0, de 28/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
 Converte um PDF num MP3 com capítulos, para ouvir num tocador de podcast. Tudo roda no seu Mac, com vozes gratuitas, sem enviar o documento para serviço nenhum.
 
@@ -99,25 +99,40 @@ Todas as opções:
 |---|---|---|
 | `--lingua en` ou `pt` | língua do texto, que define a voz | `en` |
 | `--titulo`, `--autor` | anunciados na abertura e gravados nos metadados do MP3 | nome do arquivo |
-| `--voz` | troca a voz (ver abaixo) | `af_heart` em inglês, `pf_dora` em português |
+| `--motor` | `auto`, `omnivoice`, `kokoro` ou `say` (ver Vozes) | `auto`: sua voz em português se houver referência, Kokoro no resto |
+| `--voz` | voz do Kokoro ou do `say` | `af_heart` em inglês, `pf_dora` em português |
+| `--referencia` | gravação de referência para o OmniVoice, com a transcrição num `.txt` de mesmo nome | a definida por `--definir-voz-pt` |
+| `--sem-conferencia` | desliga a conferência de cada trecho pelo Whisper | conferência ligada, se houver Whisper |
 | `--saida` | pasta onde cada documento ganha a sua subpasta | a definida, ou `saida/` |
 | `--nome` | nome do MP3, sem extensão | nome do arquivo de entrada |
-| `--motor say` | usa a voz do próprio macOS no lugar do Kokoro, muito mais rápida e bem mais robótica | `kokoro` |
 | `--sem-capitulos-de-figura` | não abre capítulo em cada figura anunciada | capítulos de figura ligados |
 | `--identificar` | só mostra páginas, metadados, língua provável e o início do texto | |
 | `--so-roteiro` | para depois do roteiro: capítulos, palavras e duração estimada, sem gerar voz | |
-| `--mostrar-pasta`, `--definir-pasta` | mostra ou grava a pasta de saída | |
+| `--mostrar-pasta` | mostra a pasta de saída, a voz em português e o Whisper configurados | |
+| `--definir-pasta`, `--definir-voz-pt`, `--definir-whisper` | gravam essas três escolhas em `~/.claude/.env` | |
 
 A entrada também pode ser o `.json` ou o `.md` já extraídos pelo Docling (ficam em `.trabalho/<nome>/`), o que permite corrigir o texto à mão antes de gerar a voz. Sem o PDF, as figuras são anunciadas mas não recortadas.
 
 ## Vozes
 
-As vozes vêm do [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), um modelo pequeno, com licença Apache 2.0, que roda no processador sem placa de vídeo. As duas vozes padrão foram escolhidas por escuta, comparando nove vozes em português e cinco em inglês sobre o mesmo parágrafo de texto acadêmico:
+Há dois motores de voz, e o `--motor auto` escolhe sozinho.
+
+**Português com a sua própria voz: OmniVoice.** O [OmniVoice](https://github.com/k2-fsa/OmniVoice), com o [ajuste para português do Brasil](https://huggingface.co/edwixx/omnivoice-brpt-v15), clona uma voz a partir de uma gravação de 5 a 10 segundos. Ele copia da gravação o timbre, o sotaque, a entonação e o ritmo, então vale gravar do jeito que você quer ouvir o livro:
+
+1. grave uns 30 segundos lendo um texto de não ficção, no ritmo de quem explica o assunto a um colega (cerca de 160 palavras por minuto), num cômodo silencioso, sem redução de ruído;
+2. recorte uma frase completa de 5 a 10 segundos e salve como `.wav`, com a transcrição exata num `.txt` de mesmo nome;
+3. `uv run gerar_audio.py --definir-voz-pt minha-voz.wav`.
+
+Referência de livro de ficção, ou de outro sotaque, passa essa entonação e esse sotaque para o texto técnico. A gravação da sua voz basta para qualquer pessoa clonar você: guarde-a como guardaria uma senha. A pasta `vozes/` do projeto fica fora do repositório por isso.
+
+O OmniVoice às vezes pula palavras em frase longa, sobretudo quando há um aparte entre travessões. Por isso o texto vai em trechos curtos e, se o [whisper.cpp](https://github.com/ggml-org/whisper.cpp) estiver instalado (`brew install whisper-cpp`, mais um modelo ggml, indicado com `--definir-whisper`), cada trecho é transcrito e comparado com o texto. O trecho incompleto é gerado de novo, até três vezes, e o que continuar incompleto é listado em `conferencia.txt`, na pasta do documento.
+
+Os pesos do OmniVoice são de uso não comercial. Para gerar áudio de uso pessoal está tudo certo; para qualquer outro uso, leia as licenças dos dois modelos.
+
+**Inglês, e português sem referência: Kokoro.** O [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) é pequeno, com licença Apache 2.0, e roda no processador cinco vezes mais rápido que o tempo real. As vozes padrão foram escolhidas por escuta:
 
 - inglês: `af_heart`. Alternativas: `am_michael`, e `bf_emma` para sotaque britânico;
-- português: `pf_dora`. Alternativas: `pm_alex` e `pm_santa`.
-
-A lista completa está no [catálogo de vozes do Kokoro](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md). As vozes em português do Kokoro são menos treinadas que as inglesas, e isso se ouve.
+- português: `pf_dora`. Alternativas: `pm_alex` e `pm_santa`. Soam robóticas em texto denso: o Kokoro atenua as vogais nasais e o "ão", segundo um estudo da UFMT de 2026.
 
 ## Levando para o celular
 
@@ -137,6 +152,7 @@ Medido num M3 Pro, só com o processador:
 
 - extração de um artigo de 17 páginas em duas colunas pelo Docling: cerca de 1 minuto;
 - voz do Kokoro: cerca de 5 vezes mais rápida que o tempo real. Um capítulo de 27 páginas deu 76 minutos de áudio, gerados em 15 minutos;
+- voz própria pelo OmniVoice, com conferência: cerca de metade do tempo real. Um capítulo de 6 mil palavras deu 40 minutos de áudio em 82 minutos de geração, e um livro de 10 horas leva cerca de 20 horas, o que dá para rodar durante a noite;
 - o MP3 sai a 64 kbps mono, cerca de 27 MB por hora de áudio.
 
 ## Limitações conhecidas
@@ -146,7 +162,7 @@ Medido num M3 Pro, só com o processador:
 - A figura só é reconhecida se tiver legenda começando por "Figure", "Fig.", "Table", "Figura", "Tabela", "Quadro" ou "Gráfico" seguido do número.
 - Notas de rodapé ainda não são tratadas. O plano é lê-las como um parêntese, no ponto final seguinte à chamada da nota.
 - Documentos longos saem num MP3 só. O plano é dividir em partes de até 3 horas.
-- A detecção de capítulos depende de seções numeradas. Documento sem numeração sai com um capítulo só, além da abertura.
+- Sem seções numeradas, só títulos curtos (até 6 palavras) abrem capítulo. Título longo vira subtítulo.
 - A remoção de citações reconhece o formato autor-ano. Citação numérica, como "[12]", continua sendo lida.
 - Até aqui, o caminho completo, do PDF ao celular, foi testado com dois documentos em inglês: um capítulo de livro acadêmico de 27 páginas e um artigo de revista de 17 páginas em duas colunas, com sete figuras e duas tabelas.
 
@@ -171,7 +187,9 @@ O projeto segue versionamento semântico. O número do meio sobe a cada funciona
 ## Créditos
 
 - [Docling](https://github.com/docling-project/docling), da IBM Research, licença MIT: extração de PDF.
-- [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), de hexgrad, licença Apache 2.0: modelo de voz.
+- [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), de hexgrad, licença Apache 2.0: voz em inglês e voz padrão em português.
+- [OmniVoice](https://github.com/k2-fsa/OmniVoice), de k2-fsa (código Apache 2.0, pesos de uso não comercial), com o [ajuste pt-BR de edwixx](https://huggingface.co/edwixx/omnivoice-brpt-v15): clonagem de voz em português.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp), licença MIT: conferência de cada trecho gerado.
 - [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), de thewh1teagle, licença MIT: execução do Kokoro sem PyTorch.
 - [eSpeak NG](https://github.com/espeak-ng/espeak-ng), licença GPL 3.0: conversão de texto em fonemas.
 - [FFmpeg](https://ffmpeg.org): montagem do MP3.
