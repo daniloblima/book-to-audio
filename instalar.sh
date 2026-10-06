@@ -11,7 +11,7 @@ if ! command -v brew >/dev/null 2>&1; then
     echo "   Homebrew não encontrado. Instale em https://brew.sh e rode este script de novo."
     exit 1
 fi
-for f in ffmpeg espeak-ng uv; do
+for f in ffmpeg espeak-ng uv pandoc; do
     if brew list "$f" >/dev/null 2>&1 || command -v "$f" >/dev/null 2>&1; then
         echo "   ok: $f"
     else

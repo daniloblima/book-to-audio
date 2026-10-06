@@ -8,6 +8,18 @@
 
 O projeto segue versionamento semântico (MAIOR.MENOR.CORREÇÃO). As entradas datadas abaixo são o diário técnico de cada sessão, na ordem em que aconteceram. As entradas de versão resumem o que cada release entrega.
 
+## [0.5.0] - 2026-10-05 (19:01)
+
+EPUB para ler no Kindle, com as figuras no ponto da citação.
+
+- `gerar_kindle.py`, sobre a mesma extração do Docling: texto de leitura (citações, notas, fórmulas e referências ficam), cada figura e tabela logo depois do parágrafo que a cita pela primeira vez, tabelas de várias páginas juntas, "Fonte:" presa à tabela, fórmulas e tabelas como imagem recortada do PDF.
+- Notas de rodapé como notas do EPUB, que o Kindle abre em janela; chamada achada pelo número colado ou separado por espaço, em ordem; notas que o Docling marca como item de lista ou texto recuperadas pela posição no pé da página; bloco de notas no fim de cada capítulo com título e número.
+- Livro inteiro (`--livro`): capítulos pelo sumário do próprio livro, uma vez cada e na ordem; numeração de figuras por capítulo. Um capítulo (`--paginas`) sai da extração do livro inteiro, sem extrair de novo; `--capitulos` lista os capítulos com a faixa de páginas.
+- Limpeza: folha de rosto da editora, cabeçalho de página marcado como texto ou colado ao parágrafo e à legenda, arte decorativa (página inteira sem legenda ou imagem repetida). Imagens em PNG de 256 cores ou JPEG: 31 MB para 6,4 MB num livro de 416 páginas.
+- Skill `/audiolivro` pergunta o formato (áudio, Kindle ou os dois) e explica o envio ao Kindle. `instalar.sh` instala o Pandoc.
+- Motor do áudio: aceita a extração quando o Docling cai ao fechar depois de gravar os arquivos.
+- Testado num Kindle com um capítulo em português (40 notas, 3 tabelas) e conferido no Calibre com um artigo em inglês, um livro de 13 capítulos e um capítulo tirado dele.
+
 ## [0.4.0] - 2026-09-28 (18:53)
 
 Voz própria em português, com conferência automática.
@@ -561,3 +573,105 @@ O autor ainda não aprovou a qualidade do OmniVoice e pediu para testar o TADA (
 - O autor aprovou esta versão ("está bom, vamos considerar esta"). `BOOK_TO_AUDIO_VOZ_PT` religada no `~/.claude/.env` com `ref-tecnica-rapida`. Versão 0.4.0 publicada.
 - Próximo: gerar um capítulo inteiro com esta versão para confirmar em texto longo; depois, notas de rodapé.
 
+
+---
+
+## [2026-10-05] - Experimento: EPUB para o Kindle com as figuras no ponto da citação (16:55)
+
+### OBJETIVO
+Além do MP3, gerar um arquivo para ler no Kindle, enviado pelo serviço de documentos pessoais da Amazon. O PDF mandado por e-mail com "convert" no assunto desmonta artigo e livro (coluna dupla, figura fora do lugar). A exigência do autor: cada figura entra exatamente no ponto em que o texto a chama.
+
+### FATOS CONFERIDOS
+- O Send to Kindle aceita EPUB por e-mail desde 2022 e sempre o converte; o "convert" no assunto só vale para PDF. Limite de 50 MB por anexo. Fontes secundárias (FiveFilters, TidBITS); a página da Amazon fica para conferir quando o envio for montado.
+- O conector do Gmail do Claude aceita anexo, mas o arquivo atravessaria a conversa codificado em base64. Descartado para EPUB com figuras.
+- Pandoc 3.9 instalado pelo Homebrew; Calibre instalado como aplicativo. Sem epubcheck.
+
+### DECISÕES
+- Um projeto só, sem aplicação separada. A limpeza do texto (cabeçalho corrido, número de página, parágrafo partido, citação de figura) é o trabalho acumulado das versões 0.1 a 0.4 e serve às duas saídas; o que é só do Kindle é pequeno (texto de leitura, Pandoc, envio). Duplicar o motor obrigaria a consertar cada defeito duas vezes.
+- Texto de leitura próprio, separado do roteiro falado. O roteiro tira citação autor-ano, fórmula, nota de rodapé, "Fonte:" e referências e troca barra por vírgula, o que serve ao ouvido e empobrece a leitura.
+- Figura citada entra logo depois do parágrafo que a cita pela primeira vez, com a legenda embaixo; figura nunca citada fica onde está no PDF. Mesma regra do áudio.
+- Em aberto: uma skill só, que pergunta na entrada se o formato é áudio, Kindle ou os dois, ou uma skill própria para o Kindle. O autor inclina para uma só e decide depois do teste.
+
+### EXPERIMENTO
+Script de teste fora do motor, em `.trabalho/scripts/gerar_epub_teste.py`, sobre três documentos: um artigo em inglês com figuras, um capítulo em português com 27 notas de rodapé e um livro completo de 416 páginas com capítulos de autores diferentes, tabelas e equações. O livro é o caso novo: o motor do áudio foi feito para um artigo ou capítulo por vez e para de ler no primeiro "Referências", e a numeração de figuras recomeça a cada capítulo.
+
+### RESULTADOS (17:10)
+Três EPUBs gerados e conferidos pelo `ebook-convert` do Calibre (EPUB para AZW3), sem nenhum erro. Ainda não passaram pelo Send to Kindle de verdade.
+
+| Documento | Tamanho | Figuras e tabelas | Notas |
+|---|---|---|---|
+| Artigo em inglês (17 páginas) | 1,3 MB | 9 no ponto da citação, 8 fórmulas | sem notas de rodapé |
+| Capítulo em português (15 páginas) | 152 KB | 3 tabelas no ponto da citação | 36 de 39 no ponto exato da chamada, 3 no fim do parágrafo |
+| Livro completo (416 páginas) | 6,4 MB | 13 capítulos, tabelas de várias páginas juntas | 23 de 33 no ponto exato, 10 no fim do parágrafo |
+
+Tempos no livro: extração pelo Docling em 5 min 43 s; o script do EPUB em 15 s.
+
+### O QUE O TESTE ENSINOU
+- **Capítulo de livro vem do sumário.** O Docling marca o sumário como `document_index`, com o título e a página. Cada linha com número de página abre um capítulo uma vez só, na ordem do sumário; repetição posterior do mesmo título é folha de rosto ou cabeçalho corrido e sai. Sem essa regra, os 25 nomes de autores da abertura viravam capítulos e um título repetido partia o capítulo 9 ao meio. Um capítulo tinha o título marcado como texto comum e também é achado pelo sumário.
+- **A numeração de figura recomeça a cada capítulo**, então a chave da figura leva o capítulo.
+- **Nota de rodapé disfarçada.** O Docling marcou 7 das 39 notas do capítulo como item de lista, com o número no campo `marker`, e elas apareciam como tópicos no meio do texto. Regra: número na frente, terço de baixo da página e página com nota ou número vizinho de nota conhecida.
+- **Chamada de nota.** O PDF traz o número colado ("Becker18") ou separado por espaço ("Mincer 16"); a busca tenta os dois, em ordem, a partir da nota anterior. Falsos positivos corrigidos: milhar ("formou 2.890 turmas") e fim de intervalo ("entre 0 e 1"). Duas chamadas do capítulo não existem na camada de texto do PDF; essas notas ficam presas ao fim do parágrafo.
+- **Peso.** PNG cheio deixava o livro com 31 MB. Paleta de 256 cores para tabela e gráfico, JPEG quando sai bem menor (foto), e retirada da arte decorativa: 6,4 MB. A arte de abertura de capítulo se acha por ser a mesma imagem repetida (hash médio 16x16, três ou mais iguais) ou por ocupar quase a página inteira sem legenda; 40 imagens saíram assim.
+- **Folha de rosto da editora** em artigo baixado de revista: tudo antes da última repetição do título, no começo, sai.
+- **Cabeçalho corrido colado ao parágrafo** ("O papel da terceira missão em regiões periféricas dinâmicas econômicas..."): 5 casos no livro, retirados pelo texto dos `page_header`. O motor do áudio tem o mesmo defeito e lê esses cabeçalhos.
+- "Fonte:" logo abaixo de uma tabela vai junto com ela para a legenda, porque a tabela pode mudar de lugar.
+
+### EM ABERTO
+- Envio real ao Kindle e leitura pelo autor: posição das figuras, nota em janela, tabela legível na tela.
+- O Pandoc numera as notas em sequência no livro inteiro, sem recomeçar por capítulo.
+- Notas no fim do artigo (seção "Notes" de revista) ficam como lista, sem ligação com a chamada.
+- Caminho mais seguro para a chamada de nota: o tamanho da fonte no PDF (o sobrescrito é menor), lido pelo pypdfium2. O Docling não guarda o sobrescrito.
+- Uma skill só, com pergunta do formato na entrada, ou duas: decidir depois da leitura no Kindle.
+
+### PRIMEIRA LEITURA NO KINDLE (17:26)
+O autor leu o EPUB do capítulo em português no Kindle, enviado pelo serviço de documentos pessoais. Funcionaram o texto com os links, as notas de rodapé em janela e as tabelas no ponto da citação, com as legendas.
+
+Dois defeitos, corrigidos no script e conferidos no Calibre:
+- **"40. Idem." solto na seção 4.2.** Era a nota 40 que a regra das notas disfarçadas não pegou: a vizinha 39 também era item de lista e não contava como nota conhecida. As notas recuperadas passam a contar como vizinhas, numa repetição até não aparecer nota nova. Resultado: 37 de 40 no ponto exato, 3 no fim do parágrafo.
+- **Fim das referências bagunçado.** Era o bloco de notas que o Pandoc põe no fim do capítulo, separado só por uma linha horizontal, sem título e sem número. Como as notas desse capítulo são quase todas referências, o bloco parecia a bibliografia continuando fora de ordem. O EPUB passa por um ajuste depois do Pandoc: o bloco ganha o título "Notas" e cada nota mostra o número, que volta à chamada no texto. No livro, 8 capítulos têm o bloco.
+
+### CAPÍTULO TIRADO DO LIVRO JÁ EXTRAÍDO (18:31)
+Pedido do autor: o EPUB do capítulo de abertura do livro de 2018 ("Universidades e a 'mão visível' do desenvolvimento regional"), que já tinha áudio. O PDF recortado do capítulo não existe mais; o livro inteiro já estava extraído.
+
+- **Opção `--paginas 33-54`.** Usa a extração do livro inteiro e fica só com o que está nas páginas pedidas, sem recortar PDF nem rodar o Docling de novo. A capa do EPUB passa a ser a primeira página do capítulo.
+- **Três defeitos que o livro inteiro escondia.** (1) Título do livro e do capítulo grudados no primeiro parágrafo: eram dois textos soltos, cabeçalhos de página marcados como texto comum, que a regra do parágrafo partido emendava por não terem ponto final. Texto igual a um cabeçalho de página ou ao título agora sai antes da montagem, mas fica guardado à parte, porque num livro pode ser o único registro do título de um capítulo e o sumário ainda o promove (sem isso, o livro caía para 12 capítulos). (2) Legendas de figuras de outros capítulos no fim do texto: o filtro por página deixava passar as legendas soltas. (3) As duas artes de abertura voltavam, porque sozinho o capítulo não tem três repetições: a comparação passa a incluir as imagens sem legenda do resto do livro, com a página em escala 1 para o hash.
+- Cabeçalho colado no começo de legenda ("Universidades e Desenvolvimento Regional: ... Figura 9: ...") também sai, comparando só as letras.
+- Lição de ambiente: no zsh, `$VAR` com espaços não se divide em palavras como no bash. Um atalho `G=".venv/bin/python script.py"` seguido de `$G ...` não roda nada, e o Calibre seguiu conferindo os EPUBs antigos da pasta. Escrever o comando inteiro.
+
+Resultado: quatro EPUBs regerados e conferidos no Calibre, sem erro (artigo 1,3 MB; livro 6,4 MB e 13 capítulos; capítulo de 2018 114 KB; capítulo de 2023 153 KB).
+
+### DESENHO APROVADO PARA A SAÍDA KINDLE
+Aprovado pelo autor depois da leitura no Kindle:
+1. O teste vira `gerar_kindle.py` na raiz, ao lado do `gerar_audio.py`, e os dois reaproveitam a extração do Docling quando ela já existe.
+2. Uma skill só, a `/audiolivro`, que pergunta na entrada o formato: áudio, Kindle ou os dois. Aceita capítulo de livro já extraído (faixa de páginas) e livro inteiro.
+3. O EPUB fica na pasta da obra, ao lado do MP3. Envio manual pelo Gmail por enquanto; envio automático num segundo momento.
+4. Os quatro documentos do teste viram bancada de regressão.
+5. Versão 0.5.0, com README e CHANGELOG, publicada quando o autor pedir o commit.
+A pasta de saída continua com o mesmo nome; o autor não pediu troca.
+
+---
+
+## [2026-10-05] - gerar_kindle.py na raiz e bancada de regressão (18:57)
+
+### O QUE MUDOU
+- **`gerar_kindle.py`**, nascido do script de teste e com a mesma convenção do `gerar_audio.py`: recebe o PDF, grava `<obra>.epub` na pasta da obra (a mesma do MP3) e o intermediário em `.trabalho/<obra>/kindle/`. Opções `--titulo`, `--autor`, `--lingua`, `--saida`, `--nome`, `--livro` e `--paginas`. Para sem o Pandoc instalado, com a instrução de instalação.
+- **Reaproveitamento da extração.** Correção do que se disse mais cedo nesta sessão: o motor do áudio já reaproveitava o JSON do Docling quando ele existe na pasta da obra e é mais novo que o PDF. O `gerar_kindle.py` faz o mesmo e procura também nas outras obras de `.trabalho/` um JSON do mesmo PDF, que é o caso do capítulo tirado de um livro já extraído inteiro.
+- **Docling que cai ao fechar.** Na primeira rodada da bancada, o Docling converteu o artigo em 46 s, gravou o JSON e o Markdown e terminou com `libc++abi: ... recursive_mutex lock failed`, código de saída de erro. O motor parava ali. `extrair_pdf()` passa a aceitar a extração quando os dois arquivos foram gravados depois do início da chamada, com um aviso no log; sem os arquivos, para como antes. Vale para o áudio e para o Kindle. O caminho do aviso ainda não foi exercitado de novo, porque a falha é intermitente.
+- O artigo da bancada tinha sido extraído para o áudio a partir de uma cópia do PDF com outro nome; a extração nova, do PDF original, deu um JSON 0,1% maior e o mesmo texto de leitura.
+
+### BANCADA
+`.trabalho/scripts/bancada_kindle.sh` (fora do repositório, porque aponta para os PDFs do autor): gera os quatro EPUBs do teste, compara o texto montado com a referência gravada e confere cada EPUB no Calibre. `--gravar` aceita o resultado atual como nova referência. Roda em bash, por causa do zsh. Primeira rodada completa: quatro iguais à referência, quatro conferidos no Calibre, 1 min 11 s.
+
+O motor do áudio, depois da mudança em `extrair_pdf()`, gerou o roteiro do capítulo de 2023 idêntico, byte a byte, ao do áudio publicado.
+
+---
+
+## [2026-10-05] - Skill com pergunta do formato, lista de capítulos e versão 0.5.0 (19:01)
+
+- **`--capitulos`** no `gerar_kindle.py`: lista os capítulos do livro, pelo sumário, com a faixa de páginas do PDF pronta para `--paginas`. No livro de teste deu os 13 capítulos, e a faixa do capítulo de abertura (33 a 54) bateu com a usada à mão. Para isso, títulos e textos passam a guardar a página.
+- **Skill `/audiolivro`**: descrição com os gatilhos do Kindle; passo 0 decide o formato (pergunta numa linha quando a frase não diz; nos dois, o Kindle primeiro, porque sai em segundos); passo 2 ganha o caso do capítulo de um livro; os passos do áudio passam a "Áudio: ..." e o passo 6 é o do Kindle, com o que conferir no log e no `posicoes.txt` antes de entregar e como mandar. A skill está ligada por atalho, então vale para sessões novas; sessões já abertas seguem com a versão anterior.
+- **README**: seção "Versão para o Kindle", Pandoc nos requisitos, na instalação e nos créditos, `gerar_kindle.py` na tabela de arquivos, medições e limitação das notas. Medido para o README: um capítulo, depois da extração do livro, sai em 1,4 s.
+- **Versão 0.5.0** no `pyproject.toml`, no `uv.lock` (que estava parado em 0.3.0 no número do próprio projeto; alinhado com `uv lock --offline`, sem mexer em dependência) e no cabeçalho do `gerar_audio.py`.
+- Bancada depois de tudo: quatro iguais à referência, quatro conferidos no Calibre.
+- Defeito cosmético anotado: no livro, o título de um capítulo ficou partido em duas linhas, o título curto e, abaixo, o subtítulo em minúscula. O texto está inteiro. Causa: o título completo começa com o cabeçalho de página do capítulo, que agora sai do começo dos textos.
+- Não publicado: commit e push esperam o pedido do autor.

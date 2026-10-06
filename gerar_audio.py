@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""book-to-audio 0.4.0 — PDF para MP3 com capítulos, figuras e tabelas.
+"""book-to-audio 0.5.0 — PDF para MP3 com capítulos, figuras e tabelas.
 
 Fluxo: PDF -> Docling (texto estruturado em JSON) -> roteiro (o que se fala, por
 capítulo) -> voz do Kokoro (ou do `say` do macOS) -> MP3 com capítulos ID3v2.
@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Seções em que a leitura para. Tudo que vem depois fica fora do áudio.
@@ -715,9 +716,21 @@ def extrair_pdf(pdf, trab):
     if not docling.exists():
         docling = "docling"
     log(f"extraindo {pdf.name} com o Docling (pode levar alguns minutos)")
-    rodar([str(docling), str(pdf.resolve()), "--pdf-backend", "pypdfium2", "--to", "json",
-           "--to", "md", "--image-export-mode", "placeholder", "--output", str(trab.resolve())])
-    return trab / f"{pdf.stem}.json", trab / f"{pdf.stem}.md"
+    inicio = time.time()
+    cmd = [str(docling), str(pdf.resolve()), "--pdf-backend", "pypdfium2", "--to", "json",
+           "--to", "md", "--image-export-mode", "placeholder", "--output", str(trab.resolve())]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    arq_json, arq_md = trab / f"{pdf.stem}.json", trab / f"{pdf.stem}.md"
+    # O Docling às vezes cai ao fechar ("recursive_mutex lock failed"), com a conversão já
+    # gravada. Medido em 05/10/2026: JSON e Markdown completos, código de saída de erro.
+    gravados = all(p.exists() and p.stat().st_mtime >= inicio for p in (arq_json, arq_md))
+    if r.returncode != 0:
+        if not gravados:
+            log(f"ERRO em: {' '.join(cmd)}\nstdout: {r.stdout}\nstderr: {r.stderr}")
+            sys.exit(1)
+        log(f"AVISO: o Docling saiu com erro ({r.returncode}) depois de gravar a extração; seguindo. "
+            f"Fim do stderr: {r.stderr.strip()[-200:]}")
+    return arq_json, arq_md
 
 
 def conferir_extracao(texto):

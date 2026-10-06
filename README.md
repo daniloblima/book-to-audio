@@ -1,8 +1,8 @@
 # book-to-audio
 
-Versão 0.4.0, de 28/09/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
+Versão 0.5.0, de 05/10/2026. O que mudou em cada versão está no [CHANGELOG.md](CHANGELOG.md).
 
-Converte um PDF num MP3 com capítulos, para ouvir num tocador de podcast. Tudo roda no seu Mac, com vozes gratuitas, sem enviar o documento para serviço nenhum.
+Converte um PDF num MP3 com capítulos, para ouvir num tocador de podcast, ou num EPUB para ler no Kindle, com as figuras no ponto em que o texto as chama. Tudo roda no seu Mac, com vozes gratuitas, sem enviar o documento para serviço nenhum.
 
 O problema que resolve: quem tem mais para ler do que tempo para ler costuma ter tempo para ouvir, no carro, na caminhada, lavando louça. Os leitores de tela e os conversores de texto em voz leem o PDF como ele está, com número de página, cabeçalho repetido, afiliação do autor e cada citação "(Martin & Sunley, 2022; Zhu et al., 2019)" no meio da frase. E um player comum de MP3 não lembra onde você parou. O book-to-audio limpa o texto antes de falar, divide o áudio pelas seções do documento e entrega um arquivo que o tocador de podcast trata como um episódio, com capítulos e posição de escuta.
 
@@ -41,6 +41,7 @@ O arquivo `-roteiro.txt` mostra exatamente o que foi falado. Vale abrir antes de
 
 - Mac com Apple Silicon (M1 ou posterior). Foi testado num M3 Pro com 18 GB de memória. Em Mac Intel e Linux deve funcionar com ajustes, mas não foi testado.
 - [Homebrew](https://brew.sh).
+- Para o EPUB, o [Pandoc](https://pandoc.org), que o `instalar.sh` instala pelo Homebrew.
 - Cerca de 2 GB livres em disco: 1,2 GB do ambiente Python (o Docling traz o PyTorch), 340 MB dos modelos de voz e os modelos de layout que o Docling baixa na primeira execução.
 
 ## Instalação
@@ -54,7 +55,7 @@ cd book-to-audio && ./instalar.sh
 
 O `instalar.sh` faz, em ordem, e pula o que já estiver feito:
 
-1. instala pelo Homebrew o `ffmpeg` (monta o MP3), o `espeak-ng` (converte o texto em fonemas para a voz) e o `uv` (cuida do ambiente Python sem mexer no Python do sistema);
+1. instala pelo Homebrew o `ffmpeg` (monta o MP3), o `espeak-ng` (converte o texto em fonemas para a voz), o `uv` (cuida do ambiente Python sem mexer no Python do sistema) e o `pandoc` (monta o EPUB);
 2. baixa os modelos de voz da página oficial do kokoro-onnx, cerca de 350 MB, e confere a integridade de cada arquivo (`baixar_modelos.sh`). Os modelos ficam em `modelos/`, fora do repositório;
 3. cria o ambiente Python com as versões exatas registradas no `uv.lock` (`uv sync`);
 4. se o [Claude Code](https://claude.com/claude-code) estiver instalado, liga a skill `/audiolivro` em `~/.claude/skills/`.
@@ -69,8 +70,9 @@ Com a skill ligada, basta pedir numa sessão nova do Claude Code, em qualquer pa
 /audiolivro transforma em áudio o artigo da Feldman sobre creative destruction
 ```
 
-Ou sem o comando: "quero ouvir esse PDF no carro", "gera o MP3 desse capítulo". A skill:
+Ou sem o comando: "quero ouvir esse PDF no carro", "gera o MP3 desse capítulo", "manda esse livro pro Kindle". A skill:
 
+0. decide se o pedido é de áudio, de Kindle ou dos dois, e pergunta quando a frase não diz;
 1. no primeiro uso, pergunta em que pasta você quer os áudios e grava a resposta em `~/.claude/.env` (`BOOK_TO_AUDIO_SAIDA`). Vale escolher uma pasta sincronizada com o celular, porque é por ela que você vê as figuras enquanto ouve;
 2. acha o documento pelo caminho ou pelo nome, com o Spotlight, e pergunta quando houver mais de um candidato;
 3. descobre título, autor e língua pela primeira página;
@@ -146,6 +148,30 @@ Os capítulos são gravados no formato ID3v2 (frames CHAP e CTOC), que é o padr
 
 Figuras: cada figura anunciada abre um capítulo próprio ("Results · Figure 5"), que vai até a próxima figura ou o fim da seção, então dá para pular direto para ela. A imagem da figura também vai embutida nesse capítulo. O Podcast Addict não mostra essa imagem em arquivo local (testado em 23/09/2026); outros tocadores que exibem arte de capítulo podem mostrar. O caminho que funciona em qualquer tocador é a pasta `figuras/`: se ela estiver numa nuvem sincronizada com o celular, você ouve o anúncio e abre a figura no app da nuvem.
 
+## Versão para o Kindle
+
+Desde a 0.5.0, o mesmo PDF pode virar também um EPUB para ler no Kindle. O PDF mandado direto para o Kindle, com "convert" no assunto do e-mail, costuma desmontar artigo e livro: coluna dupla, figura fora do lugar, cabeçalho no meio do texto. O `gerar_kindle.py` parte da mesma extração do Docling e monta um texto de leitura:
+
+- cada figura e tabela entra logo depois do parágrafo que a cita pela primeira vez, com a legenda embaixo; a que o texto nunca cita fica onde está no PDF;
+- as notas de rodapé viram notas do EPUB, que o Kindle abre numa janela a partir da chamada; no fim de cada capítulo ficam reunidas sob o título "Notas";
+- tabelas de várias páginas ficam juntas num ponto só, e a linha "Fonte:" acompanha a tabela;
+- fórmulas e tabelas entram como imagem recortada do PDF;
+- citações e referências ficam, ao contrário do áudio;
+- cabeçalho, rodapé, número de página, folha de rosto da editora e arte decorativa (página inteira sem legenda, ou a mesma imagem repetida nas aberturas de capítulo) saem.
+
+```bash
+uv run gerar_kindle.py artigo.pdf --lingua en --titulo "..." --autor "..."
+uv run gerar_kindle.py livro.pdf --livro --lingua pt --titulo "..." --autor "..."
+uv run gerar_kindle.py livro.pdf --capitulos                 # lista os capítulos e as páginas
+uv run gerar_kindle.py livro.pdf --paginas 33-54 --nome "..." --titulo "..."   # um capítulo
+```
+
+Com `--livro`, os capítulos vêm do sumário do próprio livro, e a numeração das figuras recomeça a cada capítulo. Com `--paginas`, sai só um capítulo, a partir da extração do livro inteiro, sem extrair de novo. O EPUB vai para a mesma pasta da obra que o MP3.
+
+Para mandar ao Kindle, envie um e-mail para o endereço @kindle.com da sua conta, com o EPUB anexo e o assunto em branco (a Amazon sempre converte EPUB; o "convert" só vale para PDF), ou arraste o arquivo em [amazon.com/sendtokindle](https://www.amazon.com/sendtokindle). O endereço fica em Conteúdo e dispositivos, Preferências, Configurações de documentos pessoais, e o remetente precisa estar na lista de e-mails aprovados. O limite é de 50 MB por anexo; um livro de 416 páginas com 200 imagens deu 6,4 MB.
+
+O caminho foi testado num Kindle com um capítulo em português com 40 notas de rodapé e três tabelas, e conferido pelo conversor do Calibre com um artigo em inglês e um livro inteiro de 13 capítulos.
+
 ## Desempenho
 
 Medido num M3 Pro, só com o processador:
@@ -153,7 +179,8 @@ Medido num M3 Pro, só com o processador:
 - extração de um artigo de 17 páginas em duas colunas pelo Docling: cerca de 1 minuto;
 - voz do Kokoro: cerca de 5 vezes mais rápida que o tempo real. Um capítulo de 27 páginas deu 76 minutos de áudio, gerados em 15 minutos;
 - voz própria pelo OmniVoice, com conferência: cerca de metade do tempo real. Um capítulo de 6 mil palavras deu 40 minutos de áudio em 82 minutos de geração, e um livro de 10 horas leva cerca de 20 horas, o que dá para rodar durante a noite;
-- o MP3 sai a 64 kbps mono, cerca de 27 MB por hora de áudio.
+- o MP3 sai a 64 kbps mono, cerca de 27 MB por hora de áudio;
+- livro de 416 páginas: extração em 5 min 43 s e EPUB em 15 s; um capítulo do mesmo livro, depois da extração, em 1,4 s.
 
 ## Limitações conhecidas
 
@@ -164,13 +191,15 @@ Medido num M3 Pro, só com o processador:
 - Documentos longos saem num MP3 só. O plano é dividir em partes de até 3 horas.
 - Sem seções numeradas, só títulos curtos (até 6 palavras) abrem capítulo. Título longo vira subtítulo.
 - A remoção de citações reconhece o formato autor-ano. Citação numérica, como "[12]", continua sendo lida.
+- No EPUB, a chamada da nota de rodapé é achada pelo número no texto; quando a camada de texto do PDF não traz o número, a nota fica presa ao fim do parágrafo. O Pandoc numera as notas em sequência no livro inteiro, sem recomeçar por capítulo.
 - Até aqui, o caminho completo, do PDF ao celular, foi testado com dois documentos em inglês: um capítulo de livro acadêmico de 27 páginas e um artigo de revista de 17 páginas em duas colunas, com sete figuras e duas tabelas.
 
 ## O que está no repositório
 
 | Arquivo | O que é |
 |---|---|
-| `gerar_audio.py` | o programa inteiro: extração, roteiro, voz e montagem |
+| `gerar_audio.py` | o áudio: extração, roteiro, voz e montagem |
+| `gerar_kindle.py` | o EPUB para o Kindle, sobre a mesma extração |
 | `instalar.sh` | instala tudo e liga a skill |
 | `skill/SKILL.md` | a skill `/audiolivro` do Claude Code |
 | `baixar_modelos.sh` | baixa e confere os modelos de voz |
@@ -195,6 +224,7 @@ O projeto segue versionamento semântico. O número do meio sobe a cada funciona
 - [FFmpeg](https://ffmpeg.org): montagem do MP3.
 - [mutagen](https://github.com/quodlibet/mutagen), licença GPL 2.0 ou posterior: gravação dos capítulos com imagem.
 - [pypdfium2](https://github.com/pypdfium2-team/pypdfium2), licença Apache 2.0 ou BSD-3: recorte das figuras.
+- [Pandoc](https://pandoc.org), licença GPL 2.0 ou posterior: montagem do EPUB.
 
 ## Licença
 
